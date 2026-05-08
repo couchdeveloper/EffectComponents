@@ -125,7 +125,7 @@ That function requires no framework to test, no mocking library, and no async te
 ## Getting started
 
 ```swift
-.package(url: "https://github.com/your-org/EffectView", from: "0.1.0")
+.package(url: "https://github.com/couchdeveloper/EffectView", from: "0.1.0")
 ```
 
 Start with the simplest case — one state enum, one event enum, one `update` function — and expand from there. The pattern is the same at every scale.

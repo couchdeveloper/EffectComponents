@@ -47,20 +47,34 @@ struct EffectViewTests {
     #endif
 
     // MARK: - Helpers
+    
+    struct EmbedInWindowAndMakeKeyTimeoutError: Error {}
 
     /// Wraps `view` in a hosting controller, makes the window key, and suspends
     /// until every `onAppear` in the view hierarchy has fired.
-    func embedInWindowAndMakeKey<V: View>(_ view: V) async -> (HostingController, PlatformWindow) {
+    func embedInWindowAndMakeKey<V: View>(_ view: V, timeout: TimeInterval = 1.0) async throws -> (HostingController, PlatformWindow) {
         var hostingController: HostingController?
         var window: PlatformWindow?
+        var isResumed = false
 
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let timeoutCancelTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000 + 0.5))
+                guard isResumed == false else { return }
+                isResumed = true
+                continuation.resume(throwing: EmbedInWindowAndMakeKeyTimeoutError())
+            }
             hostingController = HostingController(
                 rootView: AnyView(
                     view.onAppear {
                         // Defer one run-loop cycle so child onAppear calls (which fire
                         // breadth-first) have also completed before we resume.
-                        DispatchQueue.main.async { continuation.resume() }
+                        DispatchQueue.main.async {
+                            guard isResumed == false else { return }
+                            timeoutCancelTask.cancel()
+                            isResumed = true
+                            continuation.resume()
+                        }
                     }
                 )
             )
@@ -97,7 +111,7 @@ struct EffectViewTests {
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
+        let (_, window) = try await embedInWindowAndMakeKey(view)
         #expect(appearCount == 1, "content onAppear should fire exactly once on first render")
         cleanup(window)
     }
@@ -113,7 +127,7 @@ struct EffectViewTests {
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
+        let (_, window) = try await embedInWindowAndMakeKey(view)
         #expect(capturedLabel == "custom")
         cleanup(window)
     }
@@ -127,6 +141,8 @@ struct EffectViewTests {
         var capturedInput: Input<Event>?
         var observedValues: [Int] = []
         let expectation = Expectation()
+        
+        let timeout: UInt64 = 5_000_000_000
 
         let view = TestView(initialState: State()) { binding in
             EffectView(
@@ -145,11 +161,11 @@ struct EffectViewTests {
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
+        let (_, window) = try await embedInWindowAndMakeKey(view)
         #expect(observedValues == [0])
         #expect(capturedInput != nil)
         capturedInput?.send(.increment)
-        try await expectation.await(nanoseconds: 5_000_000_000)
+        try await expectation.await(nanoseconds: timeout)
         #expect(observedValues == [0, 1])
         cleanup(window)
     }
@@ -162,6 +178,8 @@ struct EffectViewTests {
         let counter = RenderCounter()
         let expectation = Expectation()
         var capturedInput: Input<Event>?
+
+        let timeout: UInt64 = 5_000_000_000
 
         let view = TestView(initialState: State.off) { binding in
             EffectView(
@@ -180,10 +198,10 @@ struct EffectViewTests {
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
+        let (_, window) = try await embedInWindowAndMakeKey(view)
         let countAfterMount = counter.count
         capturedInput?.send(.toggle)
-        try await expectation.await(nanoseconds: 5_000_000_000)
+        try await expectation.await(nanoseconds: timeout)
         #expect(counter.count > countAfterMount, "View should re-render after state change")
         cleanup(window)
     }
@@ -198,26 +216,27 @@ struct EffectViewTests {
         class EventLog: @unchecked Sendable { var events: [Event] = [] }
         enum Event: Sendable, Equatable { case start }
         struct State: Equatable {}
-
+        
         let log = EventLog()
-        let readyExpectation = Expectation()
 
         let view = TestView(initialState: State()) { binding in
             EffectView(
                 state: binding,
                 initialEvent: .start,
                 update: { _, event -> Effect<Event, Void>? in
+                    // Note: update with the initial event will be called before
+                    // onAppear will be called
                     log.events.append(event)
                     return nil
                 }
             ) { _, _ in
-                Color.clear.onAppear { readyExpectation.fulfill() }
+                Color.clear.onAppear {
+                    #expect(log.events == [.start], "initialEvent should be processed before content onAppear fires")
+                }
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
-        try await readyExpectation.await(nanoseconds: 5_000_000_000)
-        #expect(log.events == [.start], "initialEvent should be processed before content onAppear fires")
+        let (_, window) = try await embedInWindowAndMakeKey(view)
         cleanup(window)
     }
 
@@ -228,7 +247,6 @@ struct EffectViewTests {
         enum Event: Sendable { case increment }
 
         var capturedInput: Input<Event>?
-        let readyExpectation = Expectation()
 
         let view = TestView(initialState: State()) { binding in
             EffectView(
@@ -237,13 +255,11 @@ struct EffectViewTests {
             ) { _, input in
                 Color.clear.onAppear {
                     capturedInput = input
-                    readyExpectation.fulfill()
                 }
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
-        try await readyExpectation.await(nanoseconds: 5_000_000_000)
+        let (_, window) = try await embedInWindowAndMakeKey(view)
         guard let input = capturedInput else { Issue.record("Input not captured"); return }
 
         // Each perform() suspends until the update loop has processed the event.
@@ -262,8 +278,9 @@ struct EffectViewTests {
         let captured = LogCapture()
 
         var capturedInput: Input<Event>?
-        let readyExpectation = Expectation()
         let doneExpectation  = Expectation()
+
+        let timeout: UInt64 = 5_000_000_000
 
         let view = TestView(initialState: State()) { binding in
             EffectView(
@@ -276,7 +293,6 @@ struct EffectViewTests {
                 Text("\(state.log.count)")
                     .onAppear {
                         capturedInput = input
-                        readyExpectation.fulfill()
                     }
                     .onChange(of: state.log) { newLog in
                         captured.entries = newLog
@@ -285,13 +301,12 @@ struct EffectViewTests {
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
-        try await readyExpectation.await(nanoseconds: 5_000_000_000)
+        let (_, window) = try await embedInWindowAndMakeKey(view)
         guard let input = capturedInput else { Issue.record("Input not captured"); return }
 
         // perform() guarantees each update completes before the next event is sent.
         for i in 1...5 { await input.perform(.record(i)) }
-        try await doneExpectation.await(nanoseconds: 5_000_000_000)
+        try await doneExpectation.await(nanoseconds: timeout)
         #expect(captured.entries == [1, 2, 3, 4, 5])
         cleanup(window)
     }
@@ -303,8 +318,9 @@ struct EffectViewTests {
         enum Event: Sendable { case load, didLoad }
 
         var capturedInput: Input<Event>?
-        let readyExpectation  = Expectation()
         let loadedExpectation = Expectation()
+
+        let timeout: UInt64 = 5_000_000_000
 
         let view = TestView(initialState: State()) { binding in
             EffectView(
@@ -322,16 +338,14 @@ struct EffectViewTests {
                 Text(state.loaded ? "loaded" : "idle")
                     .onAppear {
                         capturedInput = input
-                        readyExpectation.fulfill()
                     }
                     .onChange(of: state.loaded) { _ in loadedExpectation.fulfill() }
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
-        try await readyExpectation.await(nanoseconds: 5_000_000_000)
+        let (_, window) = try await embedInWindowAndMakeKey(view)
         capturedInput?.send(.load)
-        try await loadedExpectation.await(nanoseconds: 5_000_000_000)
+        try await loadedExpectation.await(nanoseconds: timeout)
         cleanup(window)
     }
 
@@ -343,9 +357,10 @@ struct EffectViewTests {
         let tickCounter = TickCounter()
 
         var capturedInput: Input<Event>?
-        let readyExpectation    = Expectation()
         let twoTicksExpectation = Expectation(minFulfillCount: 2)
-        let stoppedExpectation  = Expectation()
+        let stoppedExpectation = Expectation()
+
+        let timeout: UInt64 = 5_000_000_000
 
         let view = TestView(initialState: State()) { binding in
             EffectView(
@@ -356,6 +371,7 @@ struct EffectViewTests {
                         state.running = true
                         return .task(name: "ticker") { input, _ in
                             do {
+                                // run infinitely - or until "ticker" tasks gets cancelled
                                 while true {
                                     try await Task.sleep(nanoseconds: 20_000_000) // 20 ms
                                     input.enqueue(.tick)
@@ -374,7 +390,6 @@ struct EffectViewTests {
                 Text("\(state.ticks)")
                     .onAppear {
                         capturedInput = input
-                        readyExpectation.fulfill()
                     }
                     .onChange(of: state.ticks) { _ in
                         tickCounter.count += 1
@@ -386,17 +401,17 @@ struct EffectViewTests {
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
-        try await readyExpectation.await(nanoseconds: 5_000_000_000)
+        let (_, window) = try await embedInWindowAndMakeKey(view)
+        #expect(capturedInput != nil)
 
         capturedInput?.send(.start)
-        try await twoTicksExpectation.await(nanoseconds: 5_000_000_000)
-
+        try await twoTicksExpectation.await(nanoseconds: timeout)
         capturedInput?.send(.stop)
-        try await stoppedExpectation.await(nanoseconds: 5_000_000_000)
+
+        try await stoppedExpectation.await(nanoseconds: timeout)
         let countAtStop = tickCounter.count
 
-        // Wait 3× the tick interval — any in-flight ticks would arrive within this window.
+        // Wait 3x the tick interval - any in-flight ticks would arrive within this window.
         try await Task.sleep(nanoseconds: 60_000_000) // 60 ms
         #expect(tickCounter.count == countAtStop, "No ticks should arrive after cancel")
         cleanup(window)
@@ -408,7 +423,7 @@ struct EffectViewTests {
 
         var capturedInput: Input<Event>?
         let readyExpectation = Expectation()
-        let doneExpectation  = Expectation()
+        let doneExpectation = Expectation()
 
         let view = TestView(initialState: State()) { binding in
             EffectView(
@@ -432,7 +447,7 @@ struct EffectViewTests {
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
+        let (_, window) = try await embedInWindowAndMakeKey(view)
         try await readyExpectation.await(nanoseconds: 5_000_000_000)
 
         // perform() awaits the entire synchronous chain: begin → step → done.
@@ -446,18 +461,24 @@ struct EffectViewTests {
         enum Event: Sendable { case startFirst, refresh, tick }
 
         var capturedInput: Input<Event>?
-        let readyExpectation = Expectation()
-        let tickExpectation  = Expectation()
+        let tickExpectation = Expectation()
+        let cancelExpectation = Expectation()
+        
+        let timeout: UInt64 = 5_000_000_000
 
         let view = TestView(initialState: State()) { binding in
             EffectView(
                 state: binding,
-                update: { state, event -> Effect<Event, Void>? in
+                update: { (state, event) -> Effect<Event, Void>? in
                     switch event {
                     case .startFirst:
                         // Long-running task that never ticks on its own.
-                        return .task(name: "worker") { _, _ in
-                            try? await Task.sleep(nanoseconds: 100_000_000_000)
+                        return .task(name: "worker") { input, _ in
+                            do {
+                                try await Task.sleep(nanoseconds: timeout)
+                            } catch {
+                                cancelExpectation.fulfill()
+                            }
                         }
                     case .refresh:
                         // Cancel stale worker, immediately start a fresh one that ticks.
@@ -474,18 +495,19 @@ struct EffectViewTests {
                 Text("\(state.ticks)")
                     .onAppear {
                         capturedInput = input
-                        readyExpectation.fulfill()
                     }
-                    .onChange(of: state.ticks) { _ in tickExpectation.fulfill() }
+                    .onChange(of: state.ticks) { _ in
+                        tickExpectation.fulfill()
+                    }
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
-        try await readyExpectation.await(nanoseconds: 5_000_000_000)
+        let (_, window) = try await embedInWindowAndMakeKey(view)
 
         capturedInput?.send(.startFirst)
         capturedInput?.send(.refresh) // cancels first task, starts new one that ticks
-        try await tickExpectation.await(nanoseconds: 5_000_000_000)
+        try await cancelExpectation.await(nanoseconds: timeout)
+        try await tickExpectation.await(nanoseconds: timeout)
         cleanup(window)
     }
 
@@ -496,11 +518,12 @@ struct EffectViewTests {
         enum Event: Sendable { case increment }
 
         var capturedInput: Input<Event>?
-        let readyExpectation  = Expectation()
-        let resetExpectation  = Expectation()
+        let resetExpectation = Expectation()
         var countsOnAppear: [Int] = []
 
-        let (hostingController, window) = await embedInWindowAndMakeKey(
+        let timeout: UInt64 = 5_000_000_000
+
+        let (hostingController, window) = try await embedInWindowAndMakeKey(
             TestView(initialState: State()) { binding in
                 EffectView(
                     state: binding,
@@ -508,13 +531,11 @@ struct EffectViewTests {
                 ) { _, input in
                     Color.clear.onAppear {
                         capturedInput = input
-                        readyExpectation.fulfill()
                     }
                 }
             }
         )
 
-        try await readyExpectation.await(nanoseconds: 5_000_000_000)
         guard let input = capturedInput else { Issue.record("Input not captured"); return }
 
         await input.perform(.increment)
@@ -535,7 +556,7 @@ struct EffectViewTests {
             }
         )
 
-        try await resetExpectation.await(nanoseconds: 5_000_000_000)
+        try await resetExpectation.await(nanoseconds: timeout)
         #expect(countsOnAppear.last == 0, "Fresh EffectView should start at count 0")
         cleanup(window)
     }
@@ -548,8 +569,9 @@ struct EffectViewTests {
         struct Env: Sendable { var value: String }
 
         var capturedInput: Input<Event>?
-        let readyExpectation   = Expectation()
-        let loadedExpectation  = Expectation()
+        let loadedExpectation = Expectation()
+
+        let timeout: UInt64 = 5_000_000_000
 
         let view = TestView(initialState: State()) { binding in
             EffectView(
@@ -570,16 +592,14 @@ struct EffectViewTests {
                 Text(state.result)
                     .onAppear {
                         capturedInput = input
-                        readyExpectation.fulfill()
                     }
                     .onChange(of: state.result) { _ in loadedExpectation.fulfill() }
             }
         }
 
-        let (_, window) = await embedInWindowAndMakeKey(view)
-        try await readyExpectation.await(nanoseconds: 5_000_000_000)
+        let (_, window) = try await embedInWindowAndMakeKey(view)
         capturedInput?.send(.fetch)
-        try await loadedExpectation.await(nanoseconds: 5_000_000_000)
+        try await loadedExpectation.await(nanoseconds: timeout)
         cleanup(window)
     }
 }
@@ -876,3 +896,4 @@ struct TaskOperationTests {
         #expect(spy.received == [.ticked])
     }
 }
+

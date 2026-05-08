@@ -36,7 +36,7 @@ Then add `EffectView` to your target dependencies.
 
 3. **Render and send.** The `EffectView` content closure receives the current state and a `send` function. Render state, and call `send` for user actions.
 
-4. **Design service functions.** Long-running or async work lives in `.task` effects. These receive a `send` function and can dispatch events back to the update loop as work progresses or completes.
+4. **Design service functions.** Long-running or async work lives in `.task` effects. These receive an `input` parameter which can be used to dispatch events back to the update loop as work progresses or completes. The example below where a `tick` event is sent back via input: `input(.tick)`:
 
 ```swift
 struct CounterView: View {

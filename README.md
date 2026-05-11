@@ -113,7 +113,7 @@ case .queryChanged(let q):
         try? await Task.sleep(for: .milliseconds(300))
         guard !Task.isCancelled else { return }
         let results = await env.search(q)
-        input(.resultsLoaded(results))
+        await input.perform(.resultsLoaded(results))
     }
 ```
 
@@ -146,9 +146,9 @@ extension Effect where Event == MyView.Event, Env == MyView.Env {
         .task(name: "load") { input, env in
             do {
                 let items = try await env.fetch()
-                input(.loaded(items))
+                await input.perform(.loaded(items))
             } catch {
-                input(.loadFailed(error))
+                await input.perform(.loadFailed(error))
             }
         }
     }
@@ -192,7 +192,7 @@ struct CounterView: View {
         case .appeared:
             return .task { send, env in
                 let count = await env.fetchInitialCount()
-                send(.loaded(count))
+                await send.perform(.loaded(count))
             }
         case .loaded(let count):
             state.count = count
@@ -278,9 +278,9 @@ extension Effect where Event == MyView.Event, Env == MyView.Env {
         .task(name: "refresh") { input, env in
             do {
                 let movies = try await env.movieFetch()
-                input(.loaded(movies))
+                await input.perform(.loaded(movies))
             } catch {
-                input(.loadFailed(error))
+                await input.perform(.loadFailed(error))
             }
         }
     }
@@ -301,7 +301,7 @@ case .queryChanged(let q):
         try? await Task.sleep(for: .milliseconds(300))
         guard !Task.isCancelled else { return }
         let results = await env.search(q)
-        input(.resultsLoaded(results))
+        await input.perform(.resultsLoaded(results))
     }
 ```
 
@@ -354,7 +354,7 @@ From inside a `.task`, use `perform(_:)` to drive the FSM and wait for the state
 return .task { input, env in
     await input.perform(.prepareUpload)   // waits for prepareUpload's full effect chain
     let result = await env.upload(…)
-    input(.uploadFinished(result))
+    await input.perform(.uploadFinished(result))
 }
 ```
 

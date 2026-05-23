@@ -251,7 +251,7 @@ public final class EffectObservable<
         }
 
         Task { @MainActor [send] in
-            try? send.control(.systemError(systemError))
+            try? send.control(ControlEvent.systemError(systemError))
         }
     }
 

@@ -27,8 +27,10 @@ let package = Package(
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
             name: "EffectView",
+            dependencies: [
+                .product(name: "Mutex", package: "swift-mutex"),
+            ],
             swiftSettings: [
-                .enableUpcomingFeature("InferSendableFromCaptures"),
             ]
         ),
         .testTarget(
@@ -38,7 +40,6 @@ let package = Package(
                 .product(name: "Mutex", package: "swift-mutex"),
             ],
             swiftSettings: [
-                .enableUpcomingFeature("InferSendableFromCaptures"),
             ]
         ),
     ],

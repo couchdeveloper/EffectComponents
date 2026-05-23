@@ -88,19 +88,22 @@ enum SearchEvent {
 The update function is a `switch` over state and event:
 
 ```swift
-func update(state: inout SearchState, event: SearchEvent) -> Effect<SearchEvent, SearchEnv>? {
+static func update(
+    _ state: inout SearchState,
+    event: SearchEvent
+) -> Effect? {
     switch (state, event) {
 
     case (_, .searchTapped(let query)):
         state = .loading(query: query)
         return .sequence([
             .cancel("search"),
-            .task(name: "search") { input, env in
+            .run(id: "search") { input, env in
                 do {
                     let movies = try await env.search(query: query)
-                    input.enqueue(.resultsReceived(movies))
+                    try? input.post(.resultsReceived(movies))
                 } catch {
-                    input.enqueue(.requestFailed(error.localizedDescription))
+                    try? input.post(.requestFailed(error.localizedDescription))
                 }
             }
         ])
@@ -160,7 +163,7 @@ Feature: Movie search
 // Scenario: User starts a search
 case (_, .searchTapped(let query)):
     state = .loading(query: query)
-    return .task(name: "search") { ... }
+    return .run(id: "search") { ... }
 
 // Scenario: Search returns results
 case (.loading(let query), .resultsReceived(let movies)):
@@ -235,7 +238,7 @@ You can also derive a transition table from the test suite and verify it matches
 
 The enum state model eliminates category 1 entirely: the Swift type system won't let you represent `isLoading == true && errorMessage != nil` if your states are an enum.
 
-Category 2 is handled by the update function being processed serially on `@MainActor`. Two events never execute concurrently. State is never observed mid-mutation. The "what if the user taps twice?" scenario is just two calls to `update` in sequence: the second `searchTapped` hits the `.sequence([.cancel("search"), .task(name: "search") { ... }])` branch and replaces the in-flight task cleanly.
+Category 2 is handled by the update function being processed serially on `@MainActor`. Two events never execute concurrently. State is never observed mid-mutation. The "what if the user taps twice?" scenario is just two calls to `update` in sequence: the second `searchTapped` hits the `.sequence([.cancel("search"), .run(id: "search") { ... }])` branch and replaces the in-flight task cleanly.
 
 Concurrency exists — tasks genuinely run in the background — but concurrency never *touches* state directly. It only delivers events. The update function remains a simple, synchronous function.
 
@@ -264,7 +267,7 @@ The key MVI property is **unidirectional data flow**: state flows down into the 
 | State | Swift enum | Impossible states unrepresentable |
 | Transitions | `update` function | Pure, synchronous, compiler-verified |
 | Side effects | `Effect` return values | Declarative descriptions, not execution |
-| Async work | Task closures in `Effect` | Isolated, named, cancellable |
+| Async work | Task closures in `Effect` | Isolated, identified, cancellable |
 | Rendering | SwiftUI `Content` closure | Reads state only, fires events only |
 
 The update function does one thing: given a state and an event, decide what the next state is and what work to trigger. Because it is pure and synchronous, it is trivially testable, straightforwardly readable, and directly traceable to requirements. Concurrency is real, but it is confined to the edges — it delivers events, it doesn't own state.

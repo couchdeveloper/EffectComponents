@@ -3,6 +3,9 @@ import Foundation
 import Testing
 import SwiftUI
 @testable import EffectView
+#if canImport(Observation)
+import Observation
+#endif
 
 #if canImport(UIKit)
 import UIKit
@@ -21,133 +24,68 @@ import AppKit
 @MainActor
 struct EffectViewTests {
 
-    // MARK: - TestView wrapper
-
-    /// Owns @State so the Binding that flows into EffectView is live.
-    struct TestView<State, Content: View>: View {
-        @SwiftUI.State private var state: State
-        private let content: (Binding<State>) -> Content
-
-        init(initialState: State, @ViewBuilder content: @escaping (Binding<State>) -> Content) {
-            self._state = .init(initialValue: initialState)
-            self.content = content
-        }
-
-        var body: some View { content($state) }
-    }
-
-    // MARK: - Platform abstractions
-
-    #if canImport(UIKit)
-    typealias HostingController = UIHostingController<AnyView>
-    typealias PlatformWindow   = UIWindow
-    #elseif canImport(AppKit)
-    typealias HostingController = NSHostingController<AnyView>
-    typealias PlatformWindow   = NSWindow
-    #endif
-
-    // MARK: - Helpers
-    
-    struct EmbedInWindowAndMakeKeyTimeoutError: Error {}
-
-    /// Wraps `view` in a hosting controller, makes the window key, and suspends
-    /// until every `onAppear` in the view hierarchy has fired.
-    func embedInWindowAndMakeKey<V: View>(_ view: V, timeout: TimeInterval = 1.0) async throws -> (HostingController, PlatformWindow) {
-        var hostingController: HostingController?
-        var window: PlatformWindow?
-        var isResumed = false
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let timeoutCancelTask = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000 + 0.5))
-                guard isResumed == false else { return }
-                isResumed = true
-                continuation.resume(throwing: EmbedInWindowAndMakeKeyTimeoutError())
-            }
-            hostingController = HostingController(
-                rootView: AnyView(
-                    view.onAppear {
-                        // Defer one run-loop cycle so child onAppear calls (which fire
-                        // breadth-first) have also completed before we resume.
-                        DispatchQueue.main.async {
-                            guard isResumed == false else { return }
-                            timeoutCancelTask.cancel()
-                            isResumed = true
-                            continuation.resume()
-                        }
-                    }
-                )
-            )
-            #if canImport(UIKit)
-            window = UIWindow()
-            window!.rootViewController = hostingController
-            window!.makeKeyAndVisible()
-            #elseif canImport(AppKit)
-            window = NSWindow(contentViewController: hostingController!)
-            window!.makeKeyAndOrderFront(nil)
-            #endif
-        }
-        return (hostingController!, window!)
-    }
-
-    func cleanup(_ window: PlatformWindow) {
-        #if canImport(UIKit)
-        window.isHidden = true
-        #elseif canImport(AppKit)
-        window.orderOut(nil)
-        #endif
-    }
-
     // MARK: - Lifecycle
 
     @Test func contentAppearsExactlyOnce() async throws {
-        enum Event: Sendable { case dummy }
-        struct State: Equatable { var x = 0 }
-
-        var appearCount = 0
-        let view = TestView(initialState: State()) { binding in
-            EffectView(state: binding, update: { _, _ -> Effect<Event, Void, Void>? in nil }) { _, _ in
-                Color.clear.onAppear { appearCount += 1 }
+        enum T: Transducer {
+            enum Event: Sendable { case dummy }
+            struct State: Equatable { var x = 0 }
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                nil
             }
         }
-
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        #expect(appearCount == 1, "content onAppear should fire exactly once on first render")
-        cleanup(window)
+        
+        var appearCount = 0
+        try await testView(initialState: T.State()) { binding in
+            EffectView(of: T.self, state: binding) { _, _ in
+                Color.clear.onAppear { appearCount += 1 }
+            }
+        } expect: {
+            #expect(appearCount == 1, "content onAppear should fire exactly once on first render")
+        }
     }
 
     @Test func initialStateIsPreserved() async throws {
-        struct State: Equatable { var label: String }
-        enum Event: Sendable { case dummy }
-
-        var capturedLabel: String?
-        let view = TestView(initialState: State(label: "custom")) { binding in
-            EffectView(state: binding, update: { _, _ -> Effect<Event, Void, Void>? in nil }) { state, _ in
-                Color.clear.onAppear { capturedLabel = state.label }
+        enum T: Transducer {
+            struct State: Equatable { var label: String }
+            enum Event: Sendable { case dummy }
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                nil
             }
         }
 
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        #expect(capturedLabel == "custom")
-        cleanup(window)
+        var capturedLabel: String?
+        try await testView(initialState: T.State(label: "custom")) { binding in
+            EffectView(of: T.self, state: binding) { state, _ in
+                Color.clear.onAppear { capturedLabel = state.label }
+            }
+        } expect: {
+            #expect(capturedLabel == "custom")
+        }
     }
 
     // MARK: - State updates
 
     @Test func updateIsCalledAndStatePropagates() async throws {
-        struct State: Equatable { var count = 0 }
-        enum Event: Sendable { case increment }
+        enum T: Transducer {
+            struct State: Equatable { var count = 0 }
+            enum Event: Sendable { case increment }
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                state.count += 1
+                return nil
+            }
+        }
 
-        var capturedInput: Input<Event, Void>?
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
         var observedValues: [Int] = []
         let expectation = Expectation()
         
         let timeout: UInt64 = 5_000_000_000
 
-        let view = TestView(initialState: State()) { binding in
+        try await testView(initialState: T.State()) { binding in
             EffectView(
-                state: binding,
-                update: { state, _ -> Effect<Event, Void, Void>? in state.count += 1; return nil }
+                of: T.self,
+                state: binding
             ) { state, input in
                 Text("\(state.count)")
                     .onAppear {
@@ -159,32 +97,35 @@ struct EffectViewTests {
                         expectation.fulfill()
                     }
             }
+        } expect: {
+            #expect(observedValues == [0])
+            #expect(capturedInput != nil)
+            try await capturedInput?.send(.increment)
+            try await expectation.await(nanoseconds: timeout)
+            #expect(observedValues == [0, 1])
         }
-
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        #expect(observedValues == [0])
-        #expect(capturedInput != nil)
-        capturedInput?.send(.increment)
-        try await expectation.await(nanoseconds: timeout)
-        #expect(observedValues == [0, 1])
-        cleanup(window)
     }
 
     @Test func stateChangeTriggersRerender() async throws {
-        enum State: Equatable, Sendable { case off, on }
-        enum Event: Sendable { case toggle }
+        enum T: Transducer {
+            enum State: Equatable, Sendable { case off, on }
+            enum Event: Sendable { case toggle }
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                state = (state == .off ? .on : .off); return nil
+            }
+        }
 
         class RenderCounter: @unchecked Sendable { var count = 0 }
         let counter = RenderCounter()
         let expectation = Expectation()
-        var capturedInput: Input<Event, Void>?
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
 
         let timeout: UInt64 = 5_000_000_000
 
-        let view = TestView(initialState: State.off) { binding in
+        try await testView(initialState: T.State.off) { binding in
             EffectView(
-                state: binding,
-                update: { state, _ -> Effect<Event, Void, Void>? in state = (state == .off ? .on : .off); return nil }
+                of: T.self,
+                state: binding
             ) { state, input in
                 Text(state == .on ? "on" : "off")
                     .onAppear {
@@ -196,14 +137,12 @@ struct EffectViewTests {
                         expectation.fulfill()
                     }
             }
+        } expect: {
+            let countAfterMount = counter.count
+            try await capturedInput?.send(.toggle)
+            try await expectation.await(nanoseconds: timeout)
+            #expect(counter.count > countAfterMount, "View should re-render after state change")
         }
-
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        let countAfterMount = counter.count
-        capturedInput?.send(.toggle)
-        try await expectation.await(nanoseconds: timeout)
-        #expect(counter.count > countAfterMount, "View should re-render after state change")
-        cleanup(window)
     }
 
     // MARK: - initialEvent
@@ -211,220 +150,290 @@ struct EffectViewTests {
     @Test func initialEventFiresOnAppear() async throws {
         // The initial event fires synchronously inside EffectView's .task, in the same
         // run-loop pass as the input setup. SwiftUI batches both state mutations into a
-        // single re-render, so onChange never sees a transition. Instead we capture every
-        // event that reaches `update` in a log and assert on it after onAppear fires.
-        class EventLog: @unchecked Sendable { var events: [Event] = [] }
-        enum Event: Sendable, Equatable { case start }
-        struct State: Equatable {}
-        
-        let log = EventLog()
-
-        let view = TestView(initialState: State()) { binding in
-            EffectView(
-                state: binding,
-                initialEvent: .start,
-                update: { _, event -> Effect<Event, Void, Void>? in
-                    // Note: update with the initial event will be called before
-                    // onAppear will be called
-                    log.events.append(event)
-                    return nil
-                }
-            ) { _, _ in
-                Color.clear.onAppear {
-                    #expect(log.events == [.start], "initialEvent should be processed before content onAppear fires")
-                }
+        // single re-render, so onChange never sees a transition. We record every event
+        // in State and assert on it after onAppear fires.
+        enum T: Transducer {
+            enum Event: Sendable, Equatable { case start }
+            struct State: Equatable { var events: [Event] = [] }
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                // Note: update with the initial event will be called before
+                // onAppear will be called
+                state.events.append(event)
+                return nil
             }
         }
 
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        cleanup(window)
+        try await testView(initialState: T.State()) { binding in
+            EffectView(of: T.self, state: binding, initialEvent: .start) { state, _ in
+                Color.clear.onAppear {
+                    #expect(state.events == [.start], "initialEvent should be processed before content onAppear fires")
+                }
+            }
+        } expect: {
+        }
     }
 
     // MARK: - request
 
     @Test func requestSuspendsUntilUpdateCompletes() async throws {
-        struct State: Equatable { var count = 0 }
-        enum Event: Sendable { case increment }
+        enum T: Transducer {
+            struct State: Equatable { var count = 0 }
+            enum Event: Sendable { case increment }
+            static func update(_ state: inout State, event: Event) -> Effect? { state.count += 1; return nil }
+        }
 
-        var capturedInput: Input<Event, Void>?
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
 
-        let view = TestView(initialState: State()) { binding in
-            EffectView(
-                state: binding,
-                update: { state, _ -> Effect<Event, Void, Void>? in state.count += 1; return nil }
-            ) { _, input in
+        try await testView(initialState: T.State()) { binding in
+            EffectView(of: T.self, state: binding) { _, input in
                 Color.clear.onAppear {
                     capturedInput = input
                 }
             }
+        } expect: {
+            guard let input = capturedInput else { Issue.record("Input not captured"); return }
+            
+            // Each request() suspends until the update loop has processed the event.
+            // Three sequential requests must complete without deadlock or timeout.
+            try await input.request(.increment)
+            try await input.request(.increment)
+            try await input.request(.increment)
         }
-
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        guard let input = capturedInput else { Issue.record("Input not captured"); return }
-
-        // Each request() suspends until the update loop has processed the event.
-        // Three sequential requests must complete without deadlock or timeout.
-        await input.request(.increment)
-        await input.request(.increment)
-        await input.request(.increment)
-        cleanup(window)
     }
 
     @Test func multipleEventsProcessedInOrder() async throws {
-        struct State: Equatable { var log: [Int] = [] }
-        enum Event: Sendable { case record(Int) }
-
-        class LogCapture: @unchecked Sendable { var entries: [Int] = [] }
-        let captured = LogCapture()
-
-        var capturedInput: Input<Event, Void>?
-        let doneExpectation  = Expectation()
-
-        let timeout: UInt64 = 5_000_000_000
-
-        let view = TestView(initialState: State()) { binding in
-            EffectView(
-                state: binding,
-                update: { state, event -> Effect<Event, Void, Void>? in
-                    if case .record(let n) = event { state.log.append(n) }
-                    return nil
-                }
-            ) { state, input in
+        enum T: Transducer {
+            struct State { var log: [Int] = [] }
+            enum Event: Sendable { case record(Int) }
+            typealias Output = [Int]
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                if case .record(let n) = event { state.log.append(n) }
+                return nil
+            }
+            
+            static func output(state: State, event: Event) -> [Int] {
+                state.log
+            }
+        }
+        
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
+        
+        try await testView(initialState: T.State()) { binding in
+            EffectView(of: T.self, state: binding) { state, input in
                 Text("\(state.log.count)")
                     .onAppear {
                         capturedInput = input
                     }
-                    .onChange(of: state.log) { newLog in
-                        captured.entries = newLog
-                        if newLog.count == 5 { doneExpectation.fulfill() }
-                    }
             }
+        } expect: {
+            guard let input = capturedInput else { Issue.record("Input not captured"); return }
+            
+            var outputs: [[Int]] = []
+            
+            // request() guarantees each update completes before the next event is sent.
+            for i in 1...5 {
+                outputs.append(try await input.request(.record(i)) ?? [])
+            }
+            
+            #expect(outputs == [
+                [1],
+                [1, 2],
+                [1, 2, 3],
+                [1, 2, 3, 4],
+                [1, 2, 3, 4, 5],
+            ])
         }
-
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        guard let input = capturedInput else { Issue.record("Input not captured"); return }
-
-        // request() guarantees each update completes before the next event is sent.
-        for i in 1...5 { await input.request(.record(i)) }
-        try await doneExpectation.await(nanoseconds: timeout)
-        #expect(captured.entries == [1, 2, 3, 4, 5])
-        cleanup(window)
     }
 
     @Test func requestReturnsOutputFromTaskClosure() async throws {
-        struct State: Equatable { var value: String = "" }
-        enum Event: Sendable { case load, loaded(String) }
-        typealias Output = String
-
-        var capturedInput: Input<Event, Output>?
-
-        let view = TestView(initialState: State()) { binding in
-            EffectView(
-                state: binding,
-                update: { (state, event) -> Effect<Event, Void, Output>? in
-                    switch event {
-                    case .load:
-                        return .request(name: "load") { input, _ in
-                            // Simulate async work, fire a completion event to update state,
-                            // then return the output value directly from the task closure.
-                            let result = "hello"
-                            await input.request(.loaded(result))   // drives state; return discarded
-                            return result                           // this becomes the Output?
+        enum T: Transducer {
+            struct State: Equatable { var value: String = "" }
+            enum Event: Sendable { case load, loaded(String) }
+            typealias Output = String
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                switch event {
+                case .load:
+                    return request(id: "load") { input, _ in
+                        // Simulate async work, aka a service function. If it was
+                        // successful, fire a completion event which updates
+                        // state. If it fails, send a corresponding failure event.
+                        // Note: If we throw within an effect closure, we feed
+                        // this error back into the system which is considered
+                        // a "system error". It preferred to handle the error or
+                        // to send a corresponding error event back.
+                        do {
+                            try await Task.sleep(for: .milliseconds(1)) // simulate remote work
+                        } catch {
+                            // not handled here in the test.
+                            // Production code should send a service error, for
+                            //  example: `let output try await input.request(Event.serviceFailed(error)) `
+                            // then return `output`.
                         }
-                    case .loaded(let v):
-                        state.value = v
-                        return nil
+                        let result = "hello"
+                        let output = try? await input.request(Event.loaded(result)) // drives state; return discarded
+                        return output // this becomes the Output?
                     }
+                case .loaded(let v):
+                    state.value = v
+                    return nil
                 }
-            ) { _, input in
-                Color.clear.onAppear { capturedInput = input }
+            }
+            static func output(state: State, event: Event) -> String {
+                state.value
             }
         }
 
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        guard let input = capturedInput else { Issue.record("Input not captured"); return }
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
 
-        let output = await input.request(.load)
-        #expect(output == "hello")
-        cleanup(window)
+        try await testView(initialState: T.State()) { binding in
+            EffectView(of: T.self, state: binding) { _, input in
+                Color.clear.onAppear { capturedInput = input }
+            }
+        } expect: {
+            guard let input = capturedInput else { Issue.record("Input not captured"); return }
+            let output = try await input.request(.load)
+            #expect(output == "hello")
+        }
+    }
+
+    @Test func requestThrowsLatchedSystemErrorInsteadOfHanging() async throws {
+        enum TestError: Error, Equatable {
+            case boom
+        }
+
+        enum T: Transducer {
+            struct State: Equatable {}
+            enum Event: Sendable { case load }
+            typealias Output = String
+
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                switch event {
+                case .load:
+                    return task(id: "load") { _, _ in
+                        throw TestError.boom
+                    }
+                }
+            }
+
+            static func output(state: State, event: Event) -> String {
+                ""
+            }
+        }
+
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
+        let completion = Expectation()
+        let timeout: UInt64 = 5_000_000_000
+
+        try await testView(initialState: T.State()) { binding in
+            EffectView(of: T.self, state: binding) { _, input in
+                Color.clear.onAppear { capturedInput = input }
+            }
+        } expect: {
+            guard let input = capturedInput else { Issue.record("Input not captured"); return }
+
+            do {
+                _ = try await input.request(.load)
+                Issue.record("Expected first request to receive the task failure")
+            } catch let error as TestError {
+                #expect(error == .boom)
+            } catch {
+                Issue.record("Unexpected first request error: \(error)")
+            }
+
+            let secondRequest = Task {
+                do {
+                    _ = try await input.request(.load)
+                    Issue.record("Expected second request to throw RuntimeUnavailable.runtimeFailed")
+                } catch let error as RuntimeUnavailable {
+                    #expect(error == .systemError)
+                } catch {
+                    Issue.record("Unexpected second request error: \(error)")
+                }
+                completion.fulfill()
+            }
+
+            try await completion.await(nanoseconds: timeout)
+            _ = await secondRequest.result
+        }
     }
 
     // MARK: - Effects
 
     @Test func taskEffectRunsAndMutatesState() async throws {
-        struct State: Equatable { var loaded = false }
-        enum Event: Sendable { case load, didLoad }
+        enum T: Transducer {
+            struct State: Equatable { var loaded = false }
+            enum Event: Sendable { case load, didLoad }
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                switch event {
+                case .load:
+                    return task(id: "fetch") { input, _ in try input.post(Event.didLoad) }
+                case .didLoad:
+                    state.loaded = true
+                    return nil
+                }
+            }
+        }
 
-        var capturedInput: Input<Event, Void>?
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
         let loadedExpectation = Expectation()
 
         let timeout: UInt64 = 5_000_000_000
 
-        let view = TestView(initialState: State()) { binding in
-            EffectView(
-                state: binding,
-                update: { state, event -> Effect<Event, Void, Void>? in
-                    switch event {
-                    case .load:
-                        return .task(name: "fetch") { input, _ in input.enqueue(.didLoad) }
-                    case .didLoad:
-                        state.loaded = true
-                        return nil
-                    }
-                }
-            ) { state, input in
+        try await testView(initialState: T.State()) { binding in
+            EffectView(of: T.self, state: binding) { state, input in
                 Text(state.loaded ? "loaded" : "idle")
                     .onAppear {
                         capturedInput = input
                     }
                     .onChange(of: state.loaded) { _ in loadedExpectation.fulfill() }
             }
+        } expect: {
+            try await capturedInput?.send(.load)
+            try await loadedExpectation.await(nanoseconds: timeout)
         }
-
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        capturedInput?.send(.load)
-        try await loadedExpectation.await(nanoseconds: timeout)
-        cleanup(window)
     }
 
     @Test func cancelEffectStopsRunningTask() async throws {
-        struct State: Equatable { var ticks = 0; var running = false }
-        enum Event: Sendable { case start, tick, stop }
+        enum T: Transducer {
+            struct State: Equatable { var ticks = 0; var running = false }
+            enum Event: Sendable { case start, tick, stop }
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                switch event {
+                case .start:
+                    state.running = true
+                    return task(id: "ticker") { input, _ in
+                        do {
+                            // run infinitely - or until "ticker" tasks gets cancelled
+                            while true {
+                                try await Task.sleep(nanoseconds: 20_000_000) // 20 ms
+                                try input.post(Event.tick)
+                            }
+                        } catch {
+                            print("Error: \(error)")
+                            /* task cancelled — exit cleanly */
+                        }
+                    }
+                case .tick:
+                    state.ticks += 1
+                    return nil
+                case .stop:
+                    state.running = false
+                    return cancel("ticker")
+                }
+            }
+        }
 
         class TickCounter: @unchecked Sendable { var count = 0 }
         let tickCounter = TickCounter()
 
-        var capturedInput: Input<Event, Void>?
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
         let twoTicksExpectation = Expectation(minFulfillCount: 2)
         let stoppedExpectation = Expectation()
 
         let timeout: UInt64 = 5_000_000_000
 
-        let view = TestView(initialState: State()) { binding in
-            EffectView(
-                state: binding,
-                update: { state, event -> Effect<Event, Void, Void>? in
-                    switch event {
-                    case .start:
-                        state.running = true
-                        return .task(name: "ticker") { input, _ in
-                            do {
-                                // run infinitely - or until "ticker" tasks gets cancelled
-                                while true {
-                                    try await Task.sleep(nanoseconds: 20_000_000) // 20 ms
-                                    input.enqueue(.tick)
-                                }
-                            } catch { /* task cancelled — exit cleanly */ }
-                        }
-                    case .tick:
-                        state.ticks += 1
-                        return nil
-                    case .stop:
-                        state.running = false
-                        return .cancel("ticker")
-                    }
-                }
-            ) { state, input in
+        try await testView(initialState: T.State()) { binding in
+            EffectView(of: T.self, state: binding) { state, input in
                 Text("\(state.ticks)")
                     .onAppear {
                         capturedInput = input
@@ -437,43 +446,41 @@ struct EffectViewTests {
                         if !isRunning { stoppedExpectation.fulfill() }
                     }
             }
+        } expect: {
+            #expect(capturedInput != nil)
+            
+            try await capturedInput?.send(.start)
+            try await twoTicksExpectation.await(nanoseconds: timeout)
+            try await capturedInput?.send(.stop)
+            
+            try await stoppedExpectation.await(nanoseconds: timeout)
+            let countAtStop = tickCounter.count
+            
+            // Wait 3x the tick interval - any in-flight ticks would arrive within this window.
+            try await Task.sleep(nanoseconds: 60_000_000) // 60 ms
+            #expect(tickCounter.count == countAtStop, "No ticks should arrive after cancel")
         }
-
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        #expect(capturedInput != nil)
-
-        capturedInput?.send(.start)
-        try await twoTicksExpectation.await(nanoseconds: timeout)
-        capturedInput?.send(.stop)
-
-        try await stoppedExpectation.await(nanoseconds: timeout)
-        let countAtStop = tickCounter.count
-
-        // Wait 3x the tick interval - any in-flight ticks would arrive within this window.
-        try await Task.sleep(nanoseconds: 60_000_000) // 60 ms
-        #expect(tickCounter.count == countAtStop, "No ticks should arrive after cancel")
-        cleanup(window)
     }
 
     @Test func actionEffectChainFiresSynchronously() async throws {
-        struct State: Equatable { var phase = 0 }
-        enum Event: Sendable { case begin, step, done }
+        enum T: Transducer {
+            struct State: Equatable { var phase = 0 }
+            enum Event: Sendable { case begin, step, done }
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                switch event {
+                case .begin: state.phase = 1; return action { _ in Event.step }
+                case .step:  state.phase = 2; return action { _ in Event.done }
+                case .done:  state.phase = 3; return nil
+                }
+            }
+        }
 
-        var capturedInput: Input<Event, Void>?
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
         let readyExpectation = Expectation()
         let doneExpectation = Expectation()
 
-        let view = TestView(initialState: State()) { binding in
-            EffectView(
-                state: binding,
-                update: { state, event -> Effect<Event, Void, Void>? in
-                    switch event {
-                    case .begin: state.phase = 1; return .action { _ in .step }
-                    case .step:  state.phase = 2; return .action { _ in .done }
-                    case .done:  state.phase = 3; return nil
-                    }
-                }
-            ) { state, input in
+        try await testView(initialState: T.State()) { binding in
+            EffectView(of: T.self, state: binding) { state, input in
                 Text("\(state.phase)")
                     .onAppear {
                         capturedInput = input
@@ -483,52 +490,56 @@ struct EffectViewTests {
                         if phase == 3 { doneExpectation.fulfill() }
                     }
             }
+        } expect: {
+            try await readyExpectation.await(nanoseconds: 5_000_000_000)
+            
+            // request() awaits the entire synchronous chain: begin → step → done.
+            try await capturedInput?.request(.begin)
+            try await doneExpectation.await(nanoseconds: 5_000_000_000)
         }
-
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        try await readyExpectation.await(nanoseconds: 5_000_000_000)
-
-        // request() awaits the entire synchronous chain: begin → step → done.
-        await capturedInput?.request(.begin)
-        try await doneExpectation.await(nanoseconds: 5_000_000_000)
-        cleanup(window)
     }
 
     @Test func sequenceEffectCancelsThenStartsTask() async throws {
-        struct State: Equatable { var ticks = 0 }
-        enum Event: Sendable { case startFirst, refresh, tick }
+        struct WorkerEnv: Sendable { let cancelExpectation: Expectation; let timeout: UInt64 }
+        enum T: Transducer {
+            struct State: Equatable { var ticks = 0 }
+            enum Event: Sendable { case startFirst, refresh, tick }
+            typealias Env = WorkerEnv
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                switch event {
+                case .startFirst:
+                    // Long-running task that never ticks on its own.
+                    return task(id: "worker") { input, env in
+                        do {
+                            try await Task.sleep(nanoseconds: env.timeout)
+                        } catch {
+                            env.cancelExpectation.fulfill()
+                        }
+                    }
+                case .refresh:
+                    // Cancel stale worker, immediately start a fresh one that ticks.
+                    return sequence([
+                        cancel("worker"),
+                        task(id: "worker") { input, _ in try input.post(Event.tick) },
+                    ])
+                case .tick:
+                    state.ticks += 1
+                    return nil
+                }
+            }
+        }
 
-        var capturedInput: Input<Event, Void>?
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
         let tickExpectation = Expectation()
         let cancelExpectation = Expectation()
-        
+
         let timeout: UInt64 = 5_000_000_000
 
-        let view = TestView(initialState: State()) { binding in
+        try await testView(initialState: T.State()) { binding in
             EffectView(
+                of: T.self,
                 state: binding,
-                update: { (state, event) -> Effect<Event, Void, Void>? in
-                    switch event {
-                    case .startFirst:
-                        // Long-running task that never ticks on its own.
-                        return .task(name: "worker") { input, _ in
-                            do {
-                                try await Task.sleep(nanoseconds: timeout)
-                            } catch {
-                                cancelExpectation.fulfill()
-                            }
-                        }
-                    case .refresh:
-                        // Cancel stale worker, immediately start a fresh one that ticks.
-                        return .sequence([
-                            .cancel("worker"),
-                            .task(name: "worker") { input, _ in input.enqueue(.tick) },
-                        ])
-                    case .tick:
-                        state.ticks += 1
-                        return nil
-                    }
-                }
+                initialEnv: WorkerEnv(cancelExpectation: cancelExpectation, timeout: timeout)
             ) { state, input in
                 Text("\(state.ticks)")
                     .onAppear {
@@ -538,35 +549,32 @@ struct EffectViewTests {
                         tickExpectation.fulfill()
                     }
             }
+        } expect: {
+            try await capturedInput?.send(.startFirst)
+            try await capturedInput?.send(.refresh) // cancels first task, starts new one that ticks
+            try await cancelExpectation.await(nanoseconds: timeout)
+            try await tickExpectation.await(nanoseconds: timeout)
         }
-
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-
-        capturedInput?.send(.startFirst)
-        capturedInput?.send(.refresh) // cancels first task, starts new one that ticks
-        try await cancelExpectation.await(nanoseconds: timeout)
-        try await tickExpectation.await(nanoseconds: timeout)
-        cleanup(window)
     }
 
     // MARK: - Identity reset
 
     @Test func identityResetRestoresInitialState() async throws {
-        struct State: Equatable { var count = 0 }
-        enum Event: Sendable { case increment }
+        enum T: Transducer {
+            struct State: Equatable { var count = 0 }
+            enum Event: Sendable { case increment }
+            static func update(_ state: inout State, event: Event) -> Effect? { state.count += 1; return nil }
+        }
 
-        var capturedInput: Input<Event, Void>?
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
         let resetExpectation = Expectation()
         var countsOnAppear: [Int] = []
 
         let timeout: UInt64 = 5_000_000_000
 
         let (hostingController, window) = try await embedInWindowAndMakeKey(
-            TestView(initialState: State()) { binding in
-                EffectView(
-                    state: binding,
-                    update: { state, _ -> Effect<Event, Void, Void>? in state.count += 1; return nil }
-                ) { _, input in
+            TestView(initialState: T.State()) { binding in
+                EffectView(of: T.self, state: binding) { _, input in
                     Color.clear.onAppear {
                         capturedInput = input
                     }
@@ -576,16 +584,13 @@ struct EffectViewTests {
 
         guard let input = capturedInput else { Issue.record("Input not captured"); return }
 
-        await input.request(.increment)
-        await input.request(.increment)
+        try await input.request(.increment)
+        try await input.request(.increment)
 
         // Replace the root view with a fresh instance at initial state.
         hostingController.rootView = AnyView(
-            TestView(initialState: State()) { binding in
-                EffectView(
-                    state: binding,
-                    update: { state, _ -> Effect<Event, Void, Void>? in state.count += 1; return nil }
-                ) { state, _ in
+            TestView(initialState: T.State()) { binding in
+                EffectView(of: T.self, state: binding) { state, _ in
                     Color.clear.onAppear {
                         countsOnAppear.append(state.count)
                         resetExpectation.fulfill()
@@ -602,30 +607,34 @@ struct EffectViewTests {
     // MARK: - Env
 
     @Test func envIsForwardedToTaskOperation() async throws {
-        struct State: Equatable { var result = "" }
-        enum Event: Sendable { case fetch, loaded(String) }
-        struct Env: Sendable { var value: String }
+        struct TaskEnv: Sendable { var value: String }
+        enum T: Transducer {
+            struct State: Equatable { var result = "" }
+            enum Event: Sendable { case fetch, loaded(String) }
+            typealias Env = TaskEnv
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                switch event {
+                case .fetch:
+                    return task(id: "fetch") { input, env in
+                        try input.post(Event.loaded(env.value))
+                    }
+                case .loaded(let value):
+                    state.result = value
+                    return nil
+                }
+            }
+        }
 
-        var capturedInput: Input<Event, Void>?
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
         let loadedExpectation = Expectation()
 
         let timeout: UInt64 = 5_000_000_000
 
-        let view = TestView(initialState: State()) { binding in
+        try await testView(initialState: T.State()) { binding in
             EffectView(
+                of: T.self,
                 state: binding,
-                initialEnv: Env(value: "hello from env"),
-                update: { state, event -> Effect<Event, Env, Void>? in
-                    switch event {
-                    case .fetch:
-                        return .task(name: "fetch") { input, env in
-                            input.enqueue(.loaded(env.value))
-                        }
-                    case .loaded(let value):
-                        state.result = value
-                        return nil
-                    }
-                }
+                initialEnv: TaskEnv(value: "hello from env")
             ) { state, input in
                 Text(state.result)
                     .onAppear {
@@ -633,19 +642,172 @@ struct EffectViewTests {
                     }
                     .onChange(of: state.result) { _ in loadedExpectation.fulfill() }
             }
+        } expect: {
+            try await capturedInput?.send(.fetch)
+            try await loadedExpectation.await(nanoseconds: timeout)
+        }
+    }
+
+    // MARK: - Observation
+
+    #if canImport(Observation)
+
+    // Shared observable type for observation tests. Defined at member scope because
+    // @Observable (an extension macro) cannot be applied to local types.
+    @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+    @Observable final class ObservableCounter: @unchecked Sendable { var value = 0 }
+
+    // Holds a weak reference without triggering the "weak var never mutated" warning.
+    private final class WeakBox<T: AnyObject>: @unchecked Sendable {
+        weak var object: T?
+        init(_ v: T) { self.object = v }
+    }
+
+    @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+    @Test func observeDoesNotRetainObservable() async throws {
+        // Effect.observe(object:keyPath:) documents that the object is held weakly.
+        // Verify that dropping all external strong references deallocates the observed
+        // object even while the EffectView is still live.
+        enum T: Transducer {
+            struct State: Equatable { var latest = -1 }
+            enum Event: Sendable { case watch(ObservableCounter), tick(Int) }
+            static func update(_ state: inout State, event: Event) -> TransducerEffect<Event, Void, Void>? {
+                switch event {
+                case .watch(let c):
+                    return observe(c, keyPath: \.value) { input, v in
+                        // Regarding: using observe with isolated action
+                        // Note: request is *nonisolated* for this Input. Thus we
+                        // cannot use `isolatedOperation` - we need to have
+                        // a Sendable operation which also requires Input to be
+                        // sendable!
+                        try? await input.request(.tick(v))
+                    }
+                case .tick(let v):
+                    state.latest = v
+                    return nil
+                }
+            }
         }
 
-        let (_, window) = try await embedInWindowAndMakeKey(view)
-        capturedInput?.send(.fetch)
-        try await loadedExpectation.await(nanoseconds: timeout)
-        cleanup(window)
+        var counter: ObservableCounter? = ObservableCounter()
+        let weakBox = WeakBox(counter!)
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
+        let firstTickExpectation = Expectation()
+        let timeout: UInt64 = 5_000_000_000
+
+        try await testView(initialState: T.State()) { binding in
+            EffectView(of: T.self, state: binding) { state, input in
+                Color.clear
+                    .onAppear { capturedInput = input }
+                    .onChange(of: state.latest) { _ in firstTickExpectation.fulfill() }
+            }
+        } expect: {
+            guard let input = capturedInput else { Issue.record("Input not captured"); return }
+            
+            // Start observation. The taskIsolated closure captures the counter strongly
+            // only until observeKeyPath returns (after the initial handler call); then the
+            // task completes and releases it. Subsequent onChange callbacks use a WeakObject.
+            try await input.send(.watch(counter!))
+            try await firstTickExpectation.await(nanoseconds: timeout)
+            
+            // Yield to let the observe task finalise and release its captured reference.
+            await Task.yield()
+            await Task.yield()
+            
+            // Drop the only remaining strong reference. ARC should free the object.
+            counter = nil
+            await Task.yield()
+            
+            #expect(weakBox.object == nil,
+                    "Effect.observe must not retain the observable beyond the initial task")
+        }
     }
+
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    @MainActor
+    @Test func cancelObservationTaskStopsHandlerInvocations() async throws {
+        // Verify that .cancel("observe") prevents further handler calls.
+        // After cancellation, mutating the observable must not deliver new values.
+        struct ObsEnv: Sendable { let counter: ObservableCounter }
+        class InvocationLog: @unchecked Sendable { var count = 0 }
+        let log = InvocationLog()
+
+        enum T: Transducer {
+            struct State: Equatable { var latest = -1 }
+            enum Event: Sendable { case start, stop, tick(Int) }
+            typealias Env = ObsEnv
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                switch event {
+                case .start:
+                    return observe(\.counter, keyPath: \.value, id: "observe") { input, value in
+                        try? await input.request(.tick(value))
+                        print("request(.tick(\(value))) finished")
+                    }
+                case .stop:
+                    return cancel("observe")
+                case .tick(let v):
+                    state.latest = v
+                    return nil
+                }
+            }
+        }
+
+        let counter = ObservableCounter()
+        var capturedInput: EffectViewInput<T.Event, T.Output>?
+        let firstTickExpectation = Expectation()
+        let secondTickExpectation = Expectation()
+        let timeout: UInt64 = 5_000_000_000
+
+        try await testView(initialState: T.State()) { binding in
+            EffectView(
+                of: T.self,
+                state: binding,
+                initialEnv: ObsEnv(counter: counter)
+            ) { state, input in
+                Color.clear
+                    .onAppear { capturedInput = input }
+                    .onChange(of: state.latest) { newValue in
+                        log.count += 1
+                        if log.count == 1 { firstTickExpectation.fulfill() }
+                        if log.count == 2 { secondTickExpectation.fulfill() }
+                    }
+            }
+        } expect: {
+            guard let input = capturedInput else { Issue.record("Input not captured"); return }
+            
+            // Start observing; the initial value (0) is delivered via state.
+            // Caution: DO NOT use `request` for a observation task, because it won't finishe before it gets cancelled!
+            try input.post(.start)
+            try await firstTickExpectation.await(nanoseconds: timeout)
+            
+            // Mutate the counter; the handler should fire once more.
+            counter.value = 1
+            try await secondTickExpectation.await(nanoseconds: timeout)
+            let countAtCancel = log.count  // expected: 2
+            
+            // Cancel the observation task.
+            try await input.request(.stop)
+            
+            // Allow any last in-flight handler task a chance to drain.
+            try await Task.sleep(nanoseconds: 50_000_000) // 50 ms
+            
+            // Further mutations must not trigger additional handler calls.
+            counter.value = 2
+            counter.value = 3
+            try await Task.sleep(nanoseconds: 50_000_000) // 50 ms
+            
+            #expect(log.count == countAtCancel,
+                    "No handler calls expected after cancelling the observation task")
+        }
+    }
+
+    #endif
 }
 
 #else
 import Testing
 
-@Suite("EffectView (SwiftUI unavailable)")
+// @Suite("EffectView (SwiftUI unavailable)")
 struct EffectViewTests {
     @Test func skipped() {
         // Hosted tests require SwiftUI + AppKit or UIKit.
@@ -665,6 +827,23 @@ private final class EventSpy<Event: Sendable>: @unchecked Sendable {
     var received: [Event] = []
 }
 
+private struct TaskInput<Event: Sendable, Output: Sendable>: TransducerInput, Sendable {
+    let onEvent: @Sendable @MainActor (Event) -> Void
+
+    func post(_ event: sending Event) {
+        Task { @MainActor in
+            onEvent(event)
+        }
+    }
+
+    func request(_ event: Event) async -> Output? {
+        await MainActor.run {
+            onEvent(event)
+            return nil
+        }
+    }
+}
+
 // MARK: - Counter model (no Env)
 
 private struct CounterState: Equatable {
@@ -679,7 +858,7 @@ private enum CounterEvent: Equatable, Sendable {
 private func counterUpdate(
     state: inout CounterState,
     event: CounterEvent
-) -> Effect<CounterEvent, Void, Void>? {
+) -> TransducerEffect<CounterEvent, Void, Void>? {
     switch event {
     case .increment:
         state.count += 1
@@ -692,12 +871,12 @@ private func counterUpdate(
         return nil
     case .start:
         state.running = true
-        return .task(name: "ticker") { input, _ in
-            input.enqueue(.ticked)
+        return ._task(id: "ticker", priority: nil, option: .switchToLatest) { input, _ in
+            try input.post(.ticked)
         }
     case .stop:
         state.running = false
-        return .cancel("ticker")
+        return ._cancel("ticker")
     case .ticked:
         state.count += 1
         return nil
@@ -728,17 +907,17 @@ private struct LoadFetchError: Error, LocalizedError {
 private func loaderUpdate(
     state: inout LoaderState,
     event: LoaderEvent
-) -> Effect<LoaderEvent, LoaderEnv, Void>? {
+) -> TransducerEffect<LoaderEvent, LoaderEnv, Void>? {
     switch event {
     case .load:
         state.isLoading = true
         state.error = nil
-        return .task(name: "fetch") { input, env in
+        return ._task(id: "fetch", priority: nil, option: .switchToLatest) { input, env in
             do {
                 let items = try await env.fetch()
-                input.enqueue(.loaded(items))
+                try input.post(.loaded(items))
             } catch {
-                input.enqueue(.failed(error.localizedDescription))
+                try input.post(.failed(error.localizedDescription))
             }
         }
     case .loaded(let items):
@@ -811,7 +990,7 @@ struct EffectTypeTests {
         var state = CounterState()
         let effect = counterUpdate(state: &state, event: .start)
         #expect(state.running == true)
-        guard case .task(name: let name, _, _) = effect, name == "ticker" else {
+        guard case ._task(id: let name, _, _, _) = effect, name == "ticker" else {
             Issue.record(#"Expected .task(name: "ticker")"#)
             return
         }
@@ -821,7 +1000,7 @@ struct EffectTypeTests {
         var state = CounterState(count: 0, running: true)
         let effect = counterUpdate(state: &state, event: .stop)
         #expect(state.running == false)
-        guard case .cancel(let name) = effect else {
+        guard case ._cancel(let name) = effect else {
             Issue.record("Expected .cancel")
             return
         }
@@ -831,7 +1010,7 @@ struct EffectTypeTests {
     @Test func loadReturnsNamedFetchTask() {
         var state = LoaderState()
         let effect = loaderUpdate(state: &state, event: .load)
-        guard case .task(name: let name, _, _) = effect, name == "fetch" else {
+        guard case ._task(id: let name, _, _, _) = effect, name == "fetch" else {
             Issue.record(#"Expected .task(name: "fetch")"#)
             return
         }
@@ -839,8 +1018,8 @@ struct EffectTypeTests {
 
     @Test func actionEffectInvokesClosureAndReturnsEvent() {
         enum Ev: Equatable, Sendable { case a, b }
-        let effect = Effect<Ev, Void, Void>.action { _ in .b }
-        guard case .action(let run) = effect else {
+        let effect = TransducerEffect<Ev, Void, Void>._actionSync { _ in .b }
+        guard case ._actionSync(let run) = effect else {
             Issue.record("Expected .action")
             return
         }
@@ -849,8 +1028,8 @@ struct EffectTypeTests {
 
     @Test func actionEffectCanReturnNil() {
         enum Ev: Equatable, Sendable { case a }
-        let effect = Effect<Ev, Void, Void>.action { _ in nil }
-        guard case .action(let run) = effect else {
+        let effect = TransducerEffect<Ev, Void, Void>._actionSync { _ in nil }
+        guard case ._actionSync(let run) = effect else {
             Issue.record("Expected .action")
             return
         }
@@ -859,19 +1038,19 @@ struct EffectTypeTests {
 
     @Test func sequenceContainsOrderedEffects() {
         enum Ev: Equatable, Sendable { case done }
-        let effect = Effect<Ev, Void, Void>.sequence([
-            .cancel("old"),
-            .task(name: "new") { _, _ in }
+        let effect = TransducerEffect<Ev, Void, Void>._sequence([
+            ._cancel("old"),
+            ._task(id: "new", priority: nil, option: .switchToLatest) { _, _ in }
         ])
-        guard case .sequence(let effects) = effect, effects.count == 2 else {
+        guard case ._sequence(let effects) = effect, effects.count == 2 else {
             Issue.record("Expected .sequence with 2 effects")
             return
         }
-        guard case .cancel("old") = effects[0] else {
+        guard case ._cancel("old") = effects[0] else {
             Issue.record(#"Expected effects[0] to be .cancel("old")"#)
             return
         }
-        guard case .task(name: let name, _, _) = effects[1], name == "new" else {
+        guard case ._task(id: let name, _, _, _) = effects[1], name == "new" else {
             Issue.record(#"Expected effects[1] to be .task(name: "new")"#)
             return
         }
@@ -883,7 +1062,7 @@ struct EffectTypeTests {
 /// These tests extract the operation closure from a returned `.task` effect and
 /// drive it directly — no SwiftUI hosting required.
 ///
-/// `enqueue` schedules work on `@MainActor` via a child Task, so one `Task.yield()`
+/// `post` schedules work on `@MainActor` via a child Task, so one `Task.yield()`
 /// after `await operation(...)` is needed to let that task run before asserting.
 @Suite("Task operations")
 @MainActor
@@ -892,13 +1071,13 @@ struct TaskOperationTests {
     @Test func fetchSuccessSendsLoadedEvent() async {
         var state = LoaderState()
         let effect = loaderUpdate(state: &state, event: .load)
-        guard case .task(_, _, let operation) = effect else {
+        guard case ._task(_, _, _, let operation) = effect else {
             Issue.record("Expected .task"); return
         }
 
         let spy = EventSpy<LoaderEvent>()
-        let input = Input<LoaderEvent, Void> { [spy] event, _, _ in spy.received.append(event) }
-        await operation(input, LoaderEnv(fetch: { ["X", "Y"] }))
+        let input = TaskInput<LoaderEvent, Void> { [spy] event in spy.received.append(event) }
+        try? await operation(input, LoaderEnv(fetch: { ["X", "Y"] }))
         await Task.yield()
 
         #expect(spy.received == [.loaded(["X", "Y"])])
@@ -907,13 +1086,13 @@ struct TaskOperationTests {
     @Test func fetchFailureSendsFailedEvent() async {
         var state = LoaderState()
         let effect = loaderUpdate(state: &state, event: .load)
-        guard case .task(_, _, let operation) = effect else {
+        guard case ._task(_, _, _, let operation) = effect else {
             Issue.record("Expected .task"); return
         }
 
         let spy = EventSpy<LoaderEvent>()
-        let input = Input<LoaderEvent, Void> { [spy] event, _, _ in spy.received.append(event) }
-        await operation(input, LoaderEnv(fetch: { throw LoadFetchError(message: "timed out") }))
+        let input = TaskInput<LoaderEvent, Void> { [spy] event in spy.received.append(event) }
+        try? await operation(input, LoaderEnv(fetch: { throw LoadFetchError(message: "timed out") }))
         await Task.yield()
 
         #expect(spy.received == [.failed("timed out")])
@@ -922,13 +1101,13 @@ struct TaskOperationTests {
     @Test func tickerTaskEnqueuesTickedEvent() async {
         var state = CounterState()
         let effect = counterUpdate(state: &state, event: .start)
-        guard case .task(_, _, let operation) = effect else {
+        guard case ._task(_, _, _, let operation) = effect else {
             Issue.record("Expected .task"); return
         }
 
         let spy = EventSpy<CounterEvent>()
-        let input = Input<CounterEvent, Void> { [spy] event, _, _ in spy.received.append(event) }
-        await operation(input, ())
+        let input = TaskInput<CounterEvent, Void> { [spy] event in spy.received.append(event) }
+        try? await operation(input, ())
         await Task.yield()
 
         #expect(spy.received == [.ticked])

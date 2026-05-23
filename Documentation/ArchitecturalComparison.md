@@ -107,7 +107,7 @@ EffectView translates the Elm/GenServer model into idiomatic SwiftUI — using `
 **State model:** Three kinds of state are structurally distinct:
 
 - **Ephemeral state** (`ViewState`) — a plain value type owned by `@State`. Lives and dies with the view's identity. Nothing outside the view can read or write it.
-- **Shared state** — an `@Observable` object passed via `Env` or the SwiftUI environment. A view *observes a named slice* of shared state via `.observe(\.store, keyPath: \.count)` and receives changes as events into its own `update` loop. The view never writes shared state directly — it sends events to the store's own mutation API.
+- **Shared state** — an `@Observable` object passed via `Env` or the SwiftUI environment. A view *observes a specific slice* of shared state via `.observe(\.store, keyPath: \.count)` and receives changes as events into its own `update` loop. The view never writes shared state directly — it sends events to the store's own mutation API.
 - **Persistent state** — always external. Effects read from or write to persistence, then translate results back into events. `update` never sees storage directly.
 
 The read/write relationship with shared state is asymmetric by construction:
@@ -119,19 +119,19 @@ ViewState ──(user action)──▶ update ──▶ effect ──▶ store.s
 
 **Effect model:** `update` returns an `Effect` value — a description, never an execution. The library executes it. `update` is synchronous, has no `async` annotation, and cannot perform work directly. The same event on the same state always produces the same `Effect` description.
 
-**Task lifecycle:** Tasks are created by returning `.task(name:)` from `update`. They are cancelled by returning `.cancel(name)` from `update`, or automatically when the view's identity is torn down via `.id(...)`. Both creation and cancellation are outputs of the transition function — they live alongside state mutations in the same `switch`, subject to the same compiler exhaustiveness checks.
+**Task lifecycle:** Tasks are created by returning `.run(id:)`, `.request(id:)`, or `.task(id:)` from `update`. They are cancelled by returning `.cancel(...)` from `update`, or automatically when the view's identity is torn down via `.id(...)`. Both creation and cancellation are outputs of the transition function — they live alongside state mutations in the same `switch`, subject to the same compiler exhaustiveness checks.
 
-A named task is automatically cancelled and replaced if `update` returns a new `.task` with the same name before the previous one finishes. This makes cancel-and-restart a one-liner with no explicit handle management:
+A task is automatically cancelled and replaced if `update` returns new work with the same identifier before the previous one finishes. This makes cancel-and-restart a one-liner with no explicit handle management:
 
 ```swift
 // update:
 case .queryChanged(let q):
     state.query = q
-    return .task(name: "search") { input, env in   // cancels any prior "search" task
+    return .run(id: "search") { input, env in
         try? await Task.sleep(for: .milliseconds(300))
         guard !Task.isCancelled else { return }
         let results = await env.search(q)
-        await input.perform(.resultsLoaded(results))
+        try? input.post(.resultsLoaded(results))
     }
 ```
 
@@ -139,22 +139,24 @@ case .queryChanged(let q):
 
 | Method | Semantics | Use when |
 |---|---|---|
-| `input(.event)` | Fire-and-forget. Enqueues on `@MainActor`, returns immediately. | Button handlers, `onChange`, observation fire-and-forget |
-| `await input.send(.event)` | Waits until `update` has processed the event. State is settled; effects are only *started*. | Caller needs to read resulting state, doesn't care about downstream work |
-| `await input.perform(.event)` | Suspends until the full effect chain — `update`, the returned effect, and any effects it triggers recursively — has settled. | Pull-to-refresh spinners, sequential task steps, observation loop backpressure |
+| `try input.post(.event)` | Fire-and-forget. Schedules on `@MainActor`, returns immediately. | Button handlers, `onChange`, observation fire-and-forget |
+| `try await input.send(.event)` | Waits until `update` has processed the event. State is settled; effects are only *started*. | Caller needs to read resulting state, doesn't care about downstream work |
+| `try await input.request(.event)` | Suspends until the full effect chain — `update`, the returned effect, and any effects it triggers recursively — has settled. | Pull-to-refresh spinners, sequential task steps, observation loop backpressure |
 
-`perform` is the mechanism that makes SwiftUI's `.refreshable` work naturally:
+`request` is the mechanism that makes SwiftUI's `.refreshable` work naturally:
 
 ```swift
 .refreshable {
-    await input.perform(.refresh)   // spinner shown until the full load cycle completes
+    try? await input.request(.refresh)
+    // spinner shown until the full load cycle completes
 }
 ```
 
 And it provides natural backpressure in observation loops — the loop does not advance to wait for the next store change until the view has fully processed the current one:
 
 ```swift
-await input.perform(.storeChanged(newCount: count))  // next observation cycle waits here
+try? await input.request(.storeChanged(newCount: count))
+// next observation cycle waits here
 ```
 
 No rate-limiting code, no semaphores. The dispatch semantic *is* the backpressure mechanism.
@@ -167,6 +169,28 @@ let effect = MyView.update(&state, event: .loadMovies)
 XCTAssertEqual(state.isLoading, true)
 // inspect the returned Effect description if needed
 ```
+
+**Component API surface:** An EffectView-based component exposes exactly three concepts to the outside world:
+
+| Concept | Role |
+|---|---|
+| `Event` | What you can *send* to it |
+| `Output` | What you can *receive* from it (via `try await input.request(_:)`) |
+| `State` | What it *renders* (optionally exposed) |
+
+Everything else — running tasks, `Env`, intermediate async types, internal models — is private to the component. The `Output?` value is not the return value of an async operation; it is what the transition function decides to hand back after the machine has processed the effect chain. The async work inside a task is an implementation detail the caller never sees.
+
+`State` has a natural second layer of privacy: the `Binding<State>` is held by a `private @State` in the enclosing SwiftUI view. Ancestor views see only what is rendered — they never hold the binding. In practice, the visible API of a component from the outside is just `Event` and `Output`:
+
+```
+Ancestor view          │  SwiftUI view (owner)    │  EffectView internals
+───────────────────────┼──────────────────────────┼─────────────────────────
+sees rendered UI only  │  State (private @State)  │  tasks (private)
+can send Event         │  Event                   │  Env (private)
+awaits Output?         │  Output                  │  intermediate types
+```
+
+This is a stronger encapsulation boundary than TCA's store, which is deliberately transparent: any code holding a `Store` reference can observe the entire state tree. EffectView components behave more like actors — they receive messages, produce typed responses, and keep everything else behind a wall.
 
 ---
 
@@ -181,7 +205,7 @@ XCTAssertEqual(state.isLoading, true)
 | **Task creation** | Anywhere | Middleware | `Effect.run` | Runtime | Spawn | `update` return value |
 | **Task cancellation** | Manual handle | Dispatch cancel action | `CancelID` action | Runtime subscription diff | Process termination | `update` return value |
 | **Task scope** | ViewModel lifetime | App lifetime | Store lifetime | Runtime | Process tree | View identity |
-| **Dispatch levels** | Synchronous call | Fire-and-forget | Fire-and-forget (+ async `send` inside effects) | Fire-and-forget | `call` (sync) / `cast` (async) | `enqueue` / `send` / `perform` |
+| **Dispatch levels** | Synchronous call | Fire-and-forget | Fire-and-forget (+ async `send` inside effects) | Fire-and-forget | `call` (sync) / `cast` (async) | `post` / `send` / `request` |
 | **Test surface** | Full class construction | Reducer pure function | `TestStore` harness | Pure `update` function | Process message passing | Static pure function |
 
 The common thread in the well-designed patterns (Elm, GenServer, TCA, EffectView) is the same: a single authoritative transition function that owns all state mutations and returns effect descriptions. The differences are in scope (global vs. local), dispatch semantics, task lifecycle management, and how much framework ceremony is required to express the pattern.

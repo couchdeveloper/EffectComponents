@@ -64,10 +64,13 @@ struct MovieSearchEnv: Sendable {
 
 Either layout works. The struct-of-structs pattern scales better when several features share a dependency group.
 
-The `update` function type annotation now becomes:
+The transducer's `update` requirement now becomes:
 
 ```swift
-(inout MovieSearchState, MovieSearchEvent) -> Effect<MovieSearchEvent, MovieSearchEnv>?
+static func update(
+    _ state: inout MovieSearchState,
+    event: MovieSearchEvent
+) -> Self.Effect?
 ```
 
 And inside a task, `env` is simply the injected value:
@@ -77,13 +80,13 @@ case (_, .searchTapped(let query)):
     state = .loading(query: query)
     return .sequence([
         .cancel("search"),
-        .task(name: "search") { input, env in
+        .run(id: "search") { input, env in
             env.trackQuery(query)
             do {
                 let movies = try await env.search(query)
-                input.enqueue(.resultsReceived(movies))
+                try? input.post(.resultsReceived(movies))
             } catch {
-                input.enqueue(.requestFailed(error.localizedDescription))
+                try? input.post(.requestFailed(error.localizedDescription))
             }
         }
     ])
@@ -158,20 +161,20 @@ struct MovieSearchView: View {
     var body: some View {
         EnvReader(\.movieSearchEnv) { env in
             EffectView(
+                of: MovieSearchLogic.self,
                 state: $state,
-                initialEnv: env,
-                update: MovieSearchLogic.update
-            ) { state, send in
-                MovieSearchContent(state: state, send: send)
+                initialEnv: env
+            ) { state, input in
+                MovieSearchContent(state: state, send: input)
             }
         }
     }
 }
 ```
 
-`EnvReader` is a thin wrapper around `@Environment`; it exists purely for ergonomics at the `EffectView` call site. The value it captures is passed to `initialEnv:`, and EffectView takes ownership from there — forwarding it to every `.task` and `.action` for the lifetime of the view.
+`EnvReader` is a thin wrapper around `@Environment`; it exists purely for ergonomics at the `EffectView` call site. The value it captures is passed to `initialEnv:`, and EffectView takes ownership from there — forwarding it to every `.run`, `.request`, and `.action` for the lifetime of the view.
 
-Note that `update` is referenced as a static function (`MovieSearchLogic.update`) rather than a closure literal. This is not required, but it keeps the view body free of logic and makes the update function easily findable and independently testable.
+Note that the transducer type (`MovieSearchLogic.self`) is passed directly rather than constructing an inline closure. This keeps the view body free of logic and makes the transition function easily findable and independently testable.
 
 ---
 
@@ -191,7 +194,7 @@ struct MovieSearchTransitionTests {
 
     @Test func searchTappedTransitionsToLoading() {
         var state = MovieSearchState.idle
-        let effect = MovieSearchLogic.update(state: &state, event: .searchTapped(query: "inception"))
+        let effect = MovieSearchLogic.update(&state, event: .searchTapped(query: "inception"))
 
         #expect(state == .loading(query: "inception"))
         #expect(effect != nil)
@@ -201,7 +204,7 @@ struct MovieSearchTransitionTests {
         var state = MovieSearchState.loading(query: "inception")
         let movies = try await testEnv.search("inception")
 
-        _ = MovieSearchLogic.update(state: &state, event: .resultsReceived(movies))
+        _ = MovieSearchLogic.update(&state, event: .resultsReceived(movies))
 
         #expect(state == .loaded(query: "inception", results: movies))
     }

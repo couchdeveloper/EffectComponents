@@ -34,7 +34,7 @@ public final class EffectObservable<
     internal(set) public var state: State
 
     @ObservationIgnored
-    private var send: Send?
+    private var runtimeSend: Send?
     @ObservationIgnored
     nonisolated(unsafe) private var runtimeUnavailable: RuntimeUnavailable?
     @ObservationIgnored
@@ -71,7 +71,7 @@ public final class EffectObservable<
             env: env
         )
         self._input = Input(self)
-        self.send = send
+        self.runtimeSend = send
         if let event = initialEvent {
             Task {
                 do {
@@ -117,7 +117,7 @@ public final class EffectObservable<
     ///   critical failure, or `CancellationError` if accepted work is later cancelled.
     public func send(_ event: Event) async throws {
         try checkRuntimeAvailability()
-        guard let send = send else {
+        guard let send = runtimeSend else {
             throw RuntimeUnavailable.actorCancelled
         }
         do {
@@ -184,7 +184,7 @@ public final class EffectObservable<
         // TODO: consider to to add a Task cancellation handler which sends a corresponding control event to the transducer.
         // The transducer's action on this is currently "implementation defined". It *could* have no effect on the task operation, or it *could* cancel it.
         try checkRuntimeAvailability()
-        guard let send = self.send, let input = _input else {
+        guard let send = self.runtimeSend, let input = _input else {
             throw RuntimeUnavailable.actorCancelled
         }
         return try await withCheckedThrowingContinuation { (continuation: Continuation<Output>) in
@@ -246,7 +246,7 @@ public final class EffectObservable<
 
         runtimeUnavailable = .actorCancelled
 
-        guard let send else {
+        guard let send = runtimeSend else {
             return
         }
 

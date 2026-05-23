@@ -3,8 +3,9 @@ import Foundation
 import EffectView
 
 @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
-public enum RemoteCounter {
-    public enum Views {}
+enum RemoteCounter {
+    enum Views {}
+    enum Transducer {}
 }
 
 // MARK: - Remote Store
@@ -18,6 +19,10 @@ extension RemoteCounter {
     /// does not publish a stream.
     @Observable @MainActor
     final class CounterStore: Sendable {
+        
+        static let shared: CounterStore = .init()
+        
+        private init() {}
 
         enum Event { case increment, decrement, reset }
 
@@ -27,97 +32,113 @@ extension RemoteCounter {
             switch event {
             case .increment: count += 1
             case .decrement: count -= 1
-            case .reset:     count  = 0
+            case .reset: count  = 0
+            }
+        }
+    }
+}
+
+// MARK: - Environment
+@available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+extension EnvironmentValues {
+    @Entry var remoteCounterEnv: RemoteCounter.Transducer.Env = .init(store: .shared)
+}
+
+// MARK: - Transducer
+@available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+extension RemoteCounter.Transducer: Transducer {
+    
+    struct State {
+        var count: Int = 0
+        var lastDelta: Int = 0
+    }
+
+    enum Event {
+        case start
+        case storeChanged(newCount: Int)
+        case incrementTapped
+        case decrementTapped
+        case resetTapped
+    }
+
+    struct Env: Identifiable {
+        public let id: UUID = .init()
+        let store: RemoteCounter.CounterStore
+    }
+    
+    static func update(
+        _ state: inout State,
+        event: Event
+    ) -> Effect? {
+        switch event {
+
+        case .start:
+            return observe(
+                \.store, keyPath: \.count,
+                 id: "observe-store-count"
+            ) { input, value in
+                print("observation-handler store.count: ", value)
+                try? await input.request(.storeChanged(newCount: value))
+            }
+
+        case .storeChanged(let newCount):
+            // The only path that writes the mirrored value.
+            print("received event: \(event), state: \(state)")
+            
+            state.lastDelta = newCount - state.count
+            state.count = newCount
+            return nil
+
+        case .incrementTapped:
+            print("incrementTapped")
+            return run { input, env in
+                await env.store.send(.increment)
+            }
+
+        case .decrementTapped:
+            print("decrementTapped")
+            return run { _, env in
+                await env.store.send(.decrement)
+            }
+
+        case .resetTapped:
+            print("resetTapped")
+            return run { _, env in
+                await env.store.send(.reset)
             }
         }
     }
 }
 
 // MARK: - Views
-
 @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
 extension RemoteCounter.Views {
+    
+    typealias Transducer = RemoteCounter.Transducer
+    typealias ViewState = Transducer.State
+    typealias Env = Transducer.Env
 
     struct ContentView: View {
 
-        /// The store lives here — single instance for this subtree.
-        @State private var store = RemoteCounter.CounterStore()
-
         var body: some View {
-            CounterView(env: .init(store: store))
+            EnvReader(\.remoteCounterEnv) { env in
+                CounterView(env: env)
+            }
         }
     }
 
     struct CounterView: View {
 
-        struct ViewState {
-            var count: Int     = 0
-            var lastDelta: Int = 0
-        }
-
-        enum Event {
-            case start
-            case storeChanged(newCount: Int)
-            case incrementTapped
-            case decrementTapped
-            case resetTapped
-        }
-
-        struct Env: Identifiable {
-            let id: UUID = .init()
-            let store: RemoteCounter.CounterStore
-        }
-
         @State private var state = ViewState()
         let env: Env
 
-        @MainActor
-        static func update(
-            _ state: inout ViewState,
-            event: Event
-        ) -> Effect<Event, Env, Void>? {
-            switch event {
-
-            case .start:
-                return .observe(
-                    \.store, keyPath: \.count,
-                     name: "observe-store-count"
-                ) { @MainActor input, value in
-                    print("observe-store-count: ", value)
-                    await input.request(.storeChanged(newCount: value))
-                }
-
-            case .storeChanged(let newCount):
-                // The only path that writes the mirrored value.
-                print("received event: \(event)")
-                
-                state.lastDelta = newCount - state.count
-                state.count     = newCount
-                return nil
-
-            case .incrementTapped:
-                return .run { _, env in
-                    await env.store.send(.increment)
-                }
-
-            case .decrementTapped:
-                return .run { _, env in
-                    await env.store.send(.decrement)
-                }
-
-            case .resetTapped:
-                return .run { _, env in
-                    await env.store.send(.reset)
-                }
-            }
-        }
 
         var body: some View {
             EffectView(
+                of: Transducer.self,
                 state: $state,
                 initialEvent: .start,
-                initialEnv: env,
-                update: Self.update(_:event:)
+                initialEnv: env
             ) { state, send in
                 VStack(spacing: 20) {
                     Text("\(state.count)")
@@ -137,7 +158,7 @@ extension RemoteCounter.Views {
 
         private func deltaLabel(_ delta: Int) -> String {
             switch delta {
-            case 0:    return " "
+            case 0:    return "0"
             case 1...: return "+\(delta)"
             default:   return "\(delta)"
             }
@@ -146,7 +167,6 @@ extension RemoteCounter.Views {
 }
 
 // MARK: - Previews
-
 #Preview {
     if #available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *) {
         RemoteCounter.Views.ContentView()

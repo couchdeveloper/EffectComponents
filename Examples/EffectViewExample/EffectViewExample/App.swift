@@ -6,12 +6,12 @@ struct EffectViewExampleApp: App {
     var body: some Scene {
         WindowGroup {
             TabView {
-                Counter.ContentView()
+                Counter.Views.ContentView()
                 .tabItem {
                     Label("Counter", systemImage: "plus.forwardslash.minus")
                 }
                 
-                Movies.ContentView()
+                Movies.Views.ContentView()
                 .tabItem {
                     Label("Movies", systemImage: "film")
                 }

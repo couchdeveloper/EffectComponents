@@ -19,7 +19,8 @@ spinner disappears before the data arrives:
 
 ```swift
 .refreshable {
-    send(.refresh)   // returns instantly; spinner stops too early
+    try? input.post(.refresh)
+    // returns instantly; spinner stops too early
 }
 ```
 
@@ -32,11 +33,12 @@ The same issue arises for any SwiftUI feature that awaits an async closure:
 ## The solution: `request(_:)`
 
 `Input.request(_:)` suspends the caller until the entire resulting effect chain
-has settled and returns an optional `Output` value:
+has settled and returns an optional `Output` value, or throws if the runtime
+cannot accept or complete the request:
 
 ```swift
 .refreshable {
-    await input.request(.refresh)
+    try? await input.request(.refresh)
     // resumes only when .refresh has been
     // fully processed and the effect settled
 }
@@ -77,7 +79,7 @@ consequence of that event.
 
 ```swift
 .refreshable {
-    await input.request(.refresh)
+    try? await input.request(.refresh)
 }
 ```
 
@@ -92,7 +94,7 @@ dismissing:
 ```swift
 Button("Save") {
     Task {
-        let saved = await input.request(.save)
+        let saved = try? await input.request(.save)
         if saved != nil { dismiss() }
     }
 }
@@ -106,7 +108,7 @@ settled:
 ```swift
 .task(id: appPhase) {
     if appPhase == .active {
-        await input.request(.resumeIfNeeded)
+        try? await input.request(.resumeIfNeeded)
     }
 }
 ```
@@ -117,7 +119,7 @@ settled:
 or polling required:
 
 ```swift
-let result = await input.request(.load)
+let result = try await input.request(.load)
 XCTAssertEqual(state.items.count, 3)
 ```
 
@@ -127,13 +129,13 @@ XCTAssertEqual(state.items.count, 3)
 
 | Approach | Stays suspended? | Returns a value? | Always resumes? |
 |---|---|---|---|
-| `send(.refresh)` | No | — | — |
+| `try? input.post(.refresh)` | No | — | — |
 | `XCTestExpectation` / `Task.sleep` | Roughly | No | No |
 | XState `waitFor(predicate)` | Yes | No | No |
 | TCA `store.send(.refresh).finish()` | Yes | No | No |
 | ImmutableData `dispatcher.dispatch` | No | — | — |
 | Akka `actor ? message` | Yes | Yes (explicit reply) | No |
-| `input.request(.refresh)` | Yes | Yes (`Output?`) | Yes |
+| `try await input.request(.refresh)` | Yes | Yes (`Output?`) | Yes |
 
 ### TCA: `StoreTask.finish()`
 
@@ -182,7 +184,7 @@ As a result, bridging to `.refreshable` requires a workaround: a state flag
 ```swift
 // ImmutableData — workaround required
 .refreshable {
-    dispatcher.dispatch(action: .refresh)
+    try? dispatcher.dispatch(action: .refresh)
     // must poll or observe isRefreshing to know
     // when to let the closure return
 }
@@ -211,5 +213,5 @@ where they are.
 
 The continuation-threading mechanism means there is no semantic difference
 between "I fired this event and don't care about the result" (`send` /
-`enqueue`) and "I fired this event and need to know when it's done"
+`post`) and "I fired this event and need to know when it's done"
 (`request`). The FSM is identical in both cases; only the call site differs.

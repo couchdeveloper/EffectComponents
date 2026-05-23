@@ -34,10 +34,13 @@ A ViewModel in the iOS world is typically a class that holds `@Published` proper
 
 With EffectView, state is a Swift value type (`struct` or `enum`) owned by the caller via `Binding`. There is no class, no `@Published`, no `objectWillChange`, and no `deinit` to worry about. State is just data.
 
-Logic lives in a pure function:
+Logic lives in the transducer's transition function:
 
 ```swift
-func update(state: inout State, event: Event) -> Effect<Event, Env>?
+static func update(
+	_ state: inout State,
+	event: Event
+) -> Self.Effect?
 ```
 
 This function is not an object. It has no stored properties, no lifecycle, and no hidden shared state. It is easier to read, easier to test, and easier to trace than a ViewModel — and it does more, because it explicitly models every side effect as a return value rather than as a fire-and-forget call inside an async method.
@@ -56,7 +59,7 @@ Dependencies are declared as structs of closures in the feature module. Concrete
 
 ### No Combine
 
-Combine was the bridge between async work and `@Published` properties on the main thread. Structured concurrency obsoletes most of that. EffectView's `Input` type handles dispatch from any isolation — `send` for synchronous `@MainActor` calls, `enqueue` for fire-and-forget from background tasks, and `perform` when you need to await acknowledgement.
+Combine was the bridge between async work and `@Published` properties on the main thread. Structured concurrency obsoletes most of that. EffectView's `Input` type handles dispatch from any isolation — `send` for synchronous `@MainActor` calls, `post` for fire-and-forget from background tasks, and `request` when you need to await acknowledgement.
 
 ---
 
@@ -64,7 +67,7 @@ Combine was the bridge between async work and `@Published` properties on the mai
 
 | Concern | Solution | Article |
 |---|---|---|
-| Async task management | Named, cancellable tasks via `Effect.task` | [Taming async tasks in SwiftUI views](TamingAsyncTasksInSwiftUIViews.md) |
+| Async task management | Identified, cancellable tasks via `Effect.run` | [Taming async tasks in SwiftUI views](TamingAsyncTasksInSwiftUIViews.md) |
 | Correctness and logic | FSM update function, impossible states unrepresentable | [Correct by Construction](CorrectByConstruction.md) |
 | Dependency injection | Struct of closures + SwiftUI environment + `EnvReader` | [Using Env for Dependency Injection](UsingEnvForDependencyInjection.md) |
 
@@ -78,10 +81,11 @@ Combine was the bridge between async work and `@Published` properties on the mai
 │                                                            │
 │   ┌─────────────────────────────────────────────────────┐  │
 │   │  EnvReader(\.myEnv) { env in                        │  │
-│   │      EffectView(state: $state,                      │  │
+│   │      EffectView(of: Logic.self,                     │  │
+│   │                 state: $state,                      │  │
 │   │                 initialEnv: env,                    │  │
-│   │                 update: Logic.update) { state, send │  │
-│   │          MyContent(state: state, send: send)        │  │
+│   │      ) { state, input in                            │  │
+│   │          MyContent(state: state, send: input)       │  │
 │   │      }                                              │  │
 │   │  }                                                  │  │
 │   └─────────────────────────────────────────────────────┘  │

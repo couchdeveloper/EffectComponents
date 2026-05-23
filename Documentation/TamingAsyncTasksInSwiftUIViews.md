@@ -13,11 +13,12 @@ This article walks through those walls one by one, and shows how `EffectView` ad
 But event-driven systems have a structural limitation: **you cannot directly `await` a logical operation**. You can only fire an event and move on:
 
 ```swift
-input.send(.fetch)
-// ... that's it. No return value. No error. No completion signal.
+try input.post(.fetch)
+// ... that's it. The event is scheduled, but there is still
+// no completion signal for the logical operation.
 ```
 
-The result of the fetch arrives later, indirectly, as a state change triggered by a `.loaded` or `.loadFailed` event. To know when the operation is complete, you have to observe state — which is cumbersome every time you need to bridge between the event-driven world and a caller that expects `async`/`await` semantics.
+The result of the fetch arrives later, indirectly, as a state change triggered by a `.loaded` or `.loadFailed` event. If dispatch itself fails, you learn that immediately. But to know when the operation is complete, you still have to observe state — which is cumbersome every time you need to bridge between the event-driven world and a caller that expects `async`/`await` semantics.
 
 This friction shows up acutely with SwiftUI's `.refreshable` modifier. It needs something to `await` — a suspension that holds the system refresh spinner until the work is genuinely done. An event-driven system has no natural answer for this. Sending `.refresh` returns immediately; the spinner would dismiss before the data has arrived.
 
@@ -28,19 +29,21 @@ The same problem appears anywhere a caller needs to know when an event's consequ
 `Input` provides three methods that give you precise control over how much of the event chain you wait for:
 
 ```swift
-input(.loaded(items))             // fire-and-forget: schedules event, returns immediately
-await input.send(.loaded(items))  // wait until update() has run
-await input.perform(.loaded(items)) // wait until update() *and all resulting effects* have settled
+try input.post(.loaded(items))    // fire-and-forget: schedules event, returns immediately
+try await input.send(.loaded(items))
+// wait until update() has run
+try await input.request(.loaded(items))
+// wait until update() *and all resulting effects* settle
 ```
 
-`perform` is the full bridge. It threads a continuation through the entire effect chain — if `.loaded` returns another effect, and that effect eventually completes, `perform` resumes only after all of it has settled. The call site reads like ordinary async/await code while the FSM continues to own all state mutations:
+`request` is the full bridge. It threads a continuation through the entire effect chain — if `.loaded` returns another effect, and that effect eventually completes, `request` resumes only after all of it has settled. The call site reads like ordinary async/await code while the FSM continues to own all state mutations:
 
 ```swift
 // In a .refreshable block — the spinner holds until the full load cycle is complete:
-await input.perform(.refresh)
+try? await input.request(.refresh)
 
 // In a test — assert state only after the operation has fully settled:
-await input.perform(.load)
+try await input.request(.load)
 #expect(state.items.count == 20)
 ```
 
@@ -91,9 +94,9 @@ Two `.task` modifiers on the same view run independently. If one depends on the 
 Stepping back, the requirements that fall out of real apps are:
 
 1. Task lifetime is tied to the **view's logical identity**, not to individual renders.
-2. Tasks can be **cancelled by name** from any event — a button tap, a timeout, a competing task starting.
-3. A **dynamic number** of named tasks can run concurrently.
-4. Starting a new task with a name that's already running **automatically cancels the previous one** — no manual bookkeeping.
+2. Tasks can be **cancelled by identifier** from any event — a button tap, a timeout, a competing task starting.
+3. A **dynamic number** of identified tasks can run concurrently.
+4. Starting new work with an identifier that's already running **automatically cancels the previous one** — no manual bookkeeping.
 5. Results feed back into the view through a **single, ordered mutation point** — no scattered `@State` writes racing each other.
 6. The `refreshable` spinner stays visible until the **full effect chain completes** — not just until the first `await`.
 
@@ -106,41 +109,48 @@ Stepping back, the requirements that fall out of real apps are:
 `EffectView` separates concerns cleanly:
 
 - **`update`** — a pure function `(inout State, Event) -> Effect?`. All state mutations happen here. No async, no throwing, just a switch.
-- **`Effect`** — what the view asks the runtime to do next: start a named task, cancel a named task, fire a synchronous action chain, or a sequence of the above.
+- **`Effect`** — what the view asks the runtime to do next: start tracked work, cancel tracked work, fire a synchronous action chain, or a sequence of the above.
 - **`Input`** — how async work sends events back into the update loop.
 
-Tasks are identified by name strings at runtime, owned by the `EffectView` for its identity lifetime, and cancelled automatically when the view disappears.
+Tasks are identified by logical identifiers at runtime, owned by the `EffectView` for its identity lifetime, and cancelled automatically when the view disappears.
 
 ### `refreshable` that actually waits
 
-`perform(_:)` suspends the caller until the full effect chain — including any task that runs and sends events back — has completed. This makes it a natural fit for `refreshable`:
+`request(_:)` suspends the caller until the full effect chain — including any task that runs and sends events back — has completed. This makes it a natural fit for `refreshable`:
 
 ```swift
 List(state.items, id: \.self) { Text($0) }
     .refreshable {
-        await input.perform(.refresh)   // spinner stays until .refresh effect finishes
+        try? await input.request(.refresh)
+        // spinner stays until .refresh settles
     }
 ```
 
-`.refresh` is a plain event. The work is a named task returned from `update`:
+`.refresh` is a plain event. The work is a task returned from `update`:
 
 ```swift
 case .refresh:
-    return .task(name: "refresh") { input, env in
-        let items = try await env.fetch()
-        await input.perform(.loaded(items))
+    return .task(id: "refresh") { input, env in
+        do {
+            let items = try await env.fetch()
+            return try await input.request(.loaded(items))
+        } catch {
+            return try await input.request(
+                .loadFailed(error.localizedDescription)
+            )
+        }
     }
 ```
 
 The three dispatch strategies on `Input` differ in what they wait for:
 
-- **`input(.loaded(items))`** — calls `enqueue`, which schedules the event on the `@MainActor` and returns immediately. The task closure exits before `update` processes `.loaded(items)`, so the outer `perform(.refresh)` continuation resumes before the state is updated. The spinner disappears too early.
+- **`try input.post(.loaded(items))`** — schedules the event on the `@MainActor` and returns immediately. The task closure exits before `update` processes `.loaded(items)`, so the outer `request(.refresh)` continuation resumes before the state is updated. The spinner disappears too early.
 
-- **`await input.send(.loaded(items))`** — hops to the `@MainActor` and runs `update(.loaded(items))` synchronously before returning. The state is updated before the closure exits. However, `send` passes a `nil` continuation, so if `.loaded` itself returns an effect — another task, an action chain — that effect's completion is not awaited. The closure exits as soon as `update` returns, regardless of what the effect does next.
+- **`try await input.send(.loaded(items))`** — hops to the `@MainActor` and runs `update(.loaded(items))` synchronously before returning. The state is updated before the closure exits. However, `send` passes a `nil` continuation, so if `.loaded` itself returns an effect — another task, an action chain — that effect's completion is not awaited. The closure exits as soon as `update` returns, regardless of what the effect does next.
 
-- **`await input.perform(.loaded(items))`** — threads the outer continuation through the entire effect chain triggered by `.loaded(items)`. The closure only exits once `update` has run *and* any effect it returned has fully settled. This is the correct choice here: it handles the simple case identically to `send`, and correctly extends the wait if `.loaded` ever grows to return an effect of its own.
+- **`try await input.request(.loaded(items))`** — threads the outer continuation through the entire effect chain triggered by `.loaded(items)`. The closure only exits once `update` has run *and* any effect it returned has fully settled. This is the correct choice here: it handles the simple case identically to `send`, and correctly extends the wait if `.loaded` ever grows to return an effect of its own.
 
-The rule of thumb: use `perform` when the result needs to be complete before the caller resumes; use `enqueue` for fire-and-forget signals where ordering doesn't matter.
+The rule of thumb: use `request` when the result needs to be complete before the caller resumes; use `post` for fire-and-forget signals where ordering doesn't matter.
 
 ### Cancel on user intent
 
@@ -155,13 +165,19 @@ That's it. No stored `Task` handle, no flag, no `id:` dance.
 
 ### Dynamic number of tasks
 
-Because task names are runtime strings, you can start as many tasks as the data dictates and cancel any individual one:
+Because task identifiers can be created at runtime, you can start as many tasks as the data dictates and cancel any individual one:
 
 ```swift
 case .startDownload(let id):
-    return .task(name: "download-\(id)") { input, env in
-        let data = try await env.download(id)
-        input.enqueue(.downloaded(id, data))
+    return .run(id: "download-\(id)") { input, env in
+        do {
+            let data = try await env.download(id)
+            try? input.post(.downloaded(id, data))
+        } catch {
+            try? input.post(
+                .downloadFailed(id, error.localizedDescription)
+            )
+        }
     }
 
 case .cancelDownload(let id):
@@ -172,16 +188,16 @@ No ViewModel, no array of handles, no manual lifecycle.
 
 ### Automatic cancel-and-restart (debounce / live search)
 
-Starting a task whose name is already running cancels the previous run first. Debounce is just a `Task.sleep` inside the operation — the restart behaviour is free:
+Starting a task whose identifier is already running cancels the previous run first. Debounce is just a `Task.sleep` inside the operation — the restart behaviour is free:
 
 ```swift
 case .queryChanged(let q):
     state.query = q
-    return .task(name: "search") { input, env in
+    return .run(id: "search") { input, env in
         try? await Task.sleep(for: .milliseconds(300))
         guard !Task.isCancelled else { return }
         let results = await env.search(q)
-        input.enqueue(.resultsLoaded(results))
+        try? input.post(.resultsLoaded(results))
     }
 ```
 

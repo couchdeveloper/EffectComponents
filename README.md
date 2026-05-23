@@ -3,428 +3,150 @@
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fcouchdeveloper%2FEffectView%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/couchdeveloper/EffectView)
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fcouchdeveloper%2FEffectView%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/couchdeveloper/EffectView)
 
-A concrete SwiftUI pattern for state, events, and async effects — without an `@Observable` class, without scattered ad-hoc methods, favouring an event-driven, MVI-style design.
+EffectView is for SwiftUI developers who are tired of ViewModels that keep absorbing async methods, loading flags, `Task` handles, cancellation logic, and UI glue.
 
-- Single mutation point via `update`.
-- Explicit effects (`task`, `action`, `cancel`).
-- Optional dependency environment captured for the view lifetime.
+It gives your view one event-driven place where state changes are decided.
 
-## The problem with the conventional approach
+## The problem
 
-In a typical SwiftUI view backed by an `@Observable` ViewModel, state is mutated from many places — `onAppear`, button handlers, async task completions, timers. As the view grows:
+Most ViewModels start small and end up like this:
 
-- Two tasks can race to update the same property.
-- An `isLoading` flag gets set to `false` before a second request finishes.
-- A cancelled task still calls back and overwrites fresh state.
-- Testing requires constructing the whole ViewModel and observing side effects.
+- button handlers mutate state
+- async callbacks mutate state
+- refresh and search race each other
+- old work finishes late and overwrites fresh UI
+- tests have to drive a whole reference type instead of one transition function
 
-None of these are bugs you wrote on purpose. They're structural: there's no single, authoritative place that says "given this state and this event, here is the new state".
+The issue is usually not the architecture name. The issue is that state changes are spread across too many places.
 
-EffectView gives you that place.
+## The solution
 
-## What you get
+With EffectView, you move a feature's logic into a small stand-alone enum that declares `State`, `Event`, and one `update` function.
 
-- **One transition function owns all state changes.** `update` takes the current state and an event, and returns new state plus an optional effect — no `async`, no network calls inside it, just logic. The same event on the same state always produces the same outcome. Nothing else in the view can mutate state.
-- **Finite state machine rigour, without the ceremony.** All transitions live in one exhaustive `switch` over your `Event` enum. The compiler tells you when you've missed a case. No hidden paths, no forgotten edge cases.
-- **Async work is explicit and named.** Nothing runs unless `update` returned an `Effect`. Tasks are tracked by name, automatically cancelled when the view disappears, and replaced if re-issued.
-- **Test the entire view logic without a simulator.** Because `update` is a transition function with no async or network calls inside it, you can drive state, events, and async effects from a plain XCTest — no SwiftUI, no `@MainActor`, no mocking framework.
+`update` is a plain synchronous function: it receives the current state and an event, changes state, and decides what should happen next. It does not call services, start tasks, or cause side effects itself.
 
+If more work is needed, `update` returns an effect: just a function, possibly async, that the runtime executes one step later and where those side effects happen. That split keeps the logic easy to read and easy to test.
 
-## How it maps to patterns you know
+```swift
+import EffectView
+import SwiftUI
 
-If you've used **VIPER**, think of `update` as the Presenter and Interactor collapsed into a single transition function. Events are inputs from the View; effects are the work the Interactor would kick off. The key difference: nothing executes inside `update` — it only *describes* what should happen. The library executes it.
+enum SearchFeature: Transducer {
+    struct State {
+        var query = ""
+        var isLoading = false
+        var results: [String] = []
+        var errorMessage: String?
+    }
 
-If you use **MVVM with `@Observable`**, `ViewState` replaces your ViewModel's published properties, and `Event` replaces your ViewModel's public methods. The mental shift is that instead of calling `viewModel.loadMovies()` imperatively, you send an event and `update` decides what effect to run.
+    enum Event {
+        case queryChanged(String)
+        case searchResponse([String])
+        case searchFailed(String)
+    }
+
+    struct Env: Sendable {
+        var search: @Sendable (String) async throws -> [String]
+    }
+
+    static func update(_ state: inout State, event: Event) -> Effect? {
+        switch event {
+        case .queryChanged(let query):
+            state.query = query
+            state.isLoading = true
+            state.errorMessage = nil
+
+            return .run(id: "search") { input, env in
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
+
+                do {
+                    let results = try await env.search(query)
+                    try? input.post(.searchResponse(results))
+                } catch {
+                    try? input.post(.searchFailed(error.localizedDescription))
+                }
+            }
+
+        case .searchResponse(let results):
+            state.results = results
+            state.isLoading = false
+            return nil
+
+        case .searchFailed(let message):
+            state.results = []
+            state.errorMessage = message
+            state.isLoading = false
+            return nil
+        }
+    }
+}
+```
+
+`update` is the only place that decides how the feature changes.
+
+When `update` returns `nil`, processing stops there. When `update` returns `.run(id: "search")`, the runtime starts that async job, tracks it by identifier, and routes follow-up events back through `update`.
+
+That means no `Task?` stored in a ViewModel, no ad-hoc mutation from random callbacks, and no guessing where the last state change came from.
+
+## Use it from SwiftUI
+
+```swift
+struct SearchView: View {
+    @State private var state = SearchFeature.State()
+
+    let env: SearchFeature.Env
+
+    var body: some View {
+        EffectView(
+            of: SearchFeature.self,
+            state: $state,
+            initialEnv: env
+        ) { state, input in
+            VStack {
+                TextField(
+                    "Search",
+                    text: Binding(
+                        get: { state.query },
+                        set: { try? input.post(.queryChanged($0)) }
+                    )
+                )
+
+                if state.isLoading {
+                    ProgressView()
+                }
+
+                List(state.results, id: \.self, rowContent: Text.init)
+            }
+            .padding()
+        }
+    }
+}
+```
+
+The view renders state and posts events. The feature logic stays in `update`.
+
+## Why this is useful
+
+- state changes stay local and explicit
+- async work is started from one place
+- repeated work can be replaced by identifier
+- tests can drive `update` with plain values
 
 ## Installation
 
-Add the package to your Swift Package Manager dependencies:
-
 ```swift
-// Package.swift
 .package(url: "https://github.com/couchdeveloper/EffectView.git", from: "0.1.0")
 ```
 
-Then add `EffectView` to your target dependencies.
+Add `EffectView` to your target dependencies.
 
-## Usage
+## Learn more
 
-1. **Define `State` and `Event`.** `State` is a plain value type holding everything the view needs to render. `Event` is an enum of all user actions and system notifications that can change state.
-
-2. **Define the transition function `update`.** A `static` function that takes the current state and an event, mutates state in place, and optionally returns an `Effect` to run or cancel. No async, no throwing — just a switch.
-
-3. **Render and send.** The `EffectView` content closure receives the current state and a `send` function. Render state, and call `send` for user actions.
-
-4. **Design service functions.** Long-running or async work lives in `.task` effects. These receive an `input` parameter which can be used to dispatch events back to the update loop as work progresses or completes. The example below where a `tick` event is sent back via input: `input(.tick)`:
-
-```swift
-struct CounterView: View {
-    struct ViewState { var counter = 0 }
-    enum Event { case start, tick, stop }
-
-    @State private var state = ViewState()
-
-    private static func update(
-        state: inout ViewState,
-        event: Event
-    ) -> Effect<Event, Void>? {
-        switch event {
-        case .start:
-            state.counter = 0
-            return .task(name: "Counter") { input, env in
-                while true {
-                    do {
-                        try await Task.sleep(for: .seconds(1))
-                        input(.tick)
-                    } catch {
-                        // ignore cancellation
-                    }
-                }
-            }
-        case .tick:
-            state.counter += 1
-            return nil
-        case .stop:
-            return .cancel("Counter")
-        }
-    }
-
-    var body: some View {
-        EffectView(state: $state, update: Self.update) { state, send in
-            VStack {
-                Text("\(state.counter)")
-                Button("Start") { send(.start) }
-                Button("Stop")  { send(.stop)  }
-            }
-        }
-    }
-}
-```
-
-## What would take 20 lines in a ViewModel takes 5 here
-
-Live search with automatic cancel-on-type — a task named `"search"` is automatically cancelled and restarted every time the query changes:
-
-```swift
-// update:
-case .queryChanged(let q):
-    state.query = q
-    return .task(name: "search") { input, env in
-        try? await Task.sleep(for: .milliseconds(300))
-        guard !Task.isCancelled else { return }
-        let results = await env.search(q)
-        await input.perform(.resultsLoaded(results))
-    }
-```
-
-No manual `Task` handles. No `debounce` publisher chain. No flag to reset.
-
-## Behavior notes
-
-- `update` is captured once when the view appears.
-- The lifetime of any running task is controlled by the `EffectView`. All tasks are automatically cancelled when the view's identity ceases to exist. A task can also be cancelled earlier by returning `.cancel(name)` from `update`.
-
-## Effect
-
-The return type of `update`. Controls what happens after a state mutation.
-
-| Case | Purpose |
-|---|---|
-| `.task(name:priority:operation:)` | Starts an async operation. Named tasks are automatically cancelled and replaced if re-issued. |
-| `.action(action:)` | Synchronous step; the returned `Event?` is processed immediately in the same run loop. See warning below. |
-| `.cancel(name)` | Cancels a running named task. |
-
-> **Warning — `.action` cycles block the main thread.**  
-> Because `.action` chains are unwound synchronously on the `@MainActor`, a cycle in your `update` function — e.g. `.ping` → `.action { .pong }` → `.action { .ping }` → … — will loop forever and hang the app. Keep action chains finite and acyclic. If you need iterative or potentially unbounded work, use a `.task` instead, where each iteration suspends and yields control back to the system.
-
-Returning `nil` means no effect — state was mutated but no async work is needed.
-
-### Custom effects
-
-For readability, effects can be declared as static factory methods on `Effect` constrained to the view's `Event` and `Env` types. This keeps `update` free of construction details and makes effects reusable across multiple cases.
-
-```swift
-extension Effect where Event == MyView.Event, Env == MyView.Env {
-    static func loadItems() -> Self {
-        .task(name: "load") { input, env in
-            do {
-                let items = try await env.fetch()
-                await input.perform(.loaded(items))
-            } catch {
-                await input.perform(.loadFailed(error))
-            }
-        }
-    }
-}
-```
-
-`update` can then return `.loadItems()` instead of spelling out the full task inline.
-
-
-## Env and View identity
-
-If you pass `initialEnv`, it is captured once when the view appears. This is intentional — swapping dependencies mid-flight can cause subtle bugs where a running task started with one implementation finishes against another. 
-
-The environment value is passed as an argument to the effect's operation and action closure and can carry dependencies or configuration values, see custom effect example above.
-
-To apply new dependencies, recreate the view identity with `.id(...)`.
-
-## Dependency injection
-
-Declare dependencies as a struct in the view layer. This keeps the interface close to the consumer and makes swapping implementations (e.g. live vs. mock) straightforward.
-
-```swift
-struct CounterView: View {
-    struct Env: Identifiable {
-        let id: UUID
-        // Declare the API the view layer needs.
-        var fetchInitialCount: () async -> Int
-        
-        static let live = Env(id: UUID(), fetchInitialCount: { await CounterService.shared.count() })
-        static let mock = Env(id: UUID(), fetchInitialCount: { 42 })
-    }
-
-    enum Event { case appeared, loaded(Int) }
-    struct ViewState { var count: Int? }
-
-    @State private var state = ViewState()
-    let env: Env
-
-    private static func update(state: inout ViewState, event: Event) -> Effect<Event, Env>? {
-        switch event {
-        case .appeared:
-            return .task { send, env in
-                let count = await env.fetchInitialCount()
-                await send.perform(.loaded(count))
-            }
-        case .loaded(let count):
-            state.count = count
-            return nil
-        }
-    }
-
-    var body: some View {
-        EffectView(state: $state, initialEnv: env, update: Self.update) { state, send in
-            Text(state.count.map { "\($0)" } ?? "Loading…")
-                .task { send(.appeared) }
-        }
-        .id(env.id)
-    }
-}
-```
-
-At the call site, pass the environment that fits the context — no changes to the view or update logic required:
-
-```swift
-CounterView(env: .live)   // production
-CounterView(env: .mock)   // previews, tests
-```
-
-## Dependency injection via SwiftUI Environment
-
-For dependencies that need to be available deep in the view hierarchy, you can deliver them through the SwiftUI environment using `EnvReader`. Wrap each injectable operation in a lightweight `Action` struct so the environment key stays typed and the default implementation is co-located with the declaration.
-
-```swift
-// 1. Declare the action
-struct CounterAction: Sendable {
-    var fetchCount: @Sendable () async -> Int = { await CounterService.shared.count() }
-}
-
-extension EnvironmentValues {
-    @Entry var counterAction = CounterAction()
-}
-
-// 2. Compose the view's Env from the environment at the call site
-struct CounterContainerView: View {
-    var body: some View {
-        EnvReader(\.counterAction) { action in
-            CounterView(
-                env: .init(id: UUID(), 
-                fetchInitialCount: action.fetchCount)
-            )
-        }
-    }
-}
-```
-
-In tests or previews, override just the actions you need:
-
-```swift
-CounterContainerView()
-    .environment(\.counterAction, CounterAction(fetchCount: { 42 }))
-```
-
-This keeps each injectable operation minimal and composable. The view layer owns the interface; the environment owns the wiring.
-
-## Recipes
-
-Short, focused snippets for common patterns. Each one highlights a specific feature in isolation.
-
----
-
-### Pull-to-refresh
-
-`perform(_:)` suspends until the full effect chain completes, which makes it a natural fit for SwiftUI's `refreshable` modifier.
-
-```swift
-List(state.movies, rowContent: MovieRow.init)
-    .refreshable {
-        await input.perform(.refresh)   // spinner shown until .refresh effect completes
-    }
-```
-
-`.refresh` is just a regular event. The actual async work is a custom effect returned from `update`:
-
-```swift
-extension Effect where Event == MyView.Event, Env == MyView.Env {
-    static func refreshMovies() -> Self {
-        .task(name: "refresh") { input, env in
-            do {
-                let movies = try await env.movieFetch()
-                await input.perform(.loaded(movies))
-            } catch {
-                await input.perform(.loadFailed(error))
-            }
-        }
-    }
-}
-```
-
----
-
-### Cancel-and-restart (debounce / live search)
-
-Name the task. A new event with the same task name cancels the previous run automatically before starting a fresh one.
-
-```swift
-// update:
-case .queryChanged(let q):
-    state.query = q
-    return .task(name: "search") { input, env in
-        try? await Task.sleep(for: .milliseconds(300))
-        guard !Task.isCancelled else { return }
-        let results = await env.search(q)
-        await input.perform(.resultsLoaded(results))
-    }
-```
-
----
-
-### Synchronous action chain (setup sequence)
-
-`.action` returns the next event to process immediately in the same run loop. Use this to break multi-step setup into deterministic, individually-testable events.
-
-```swift
-// update:
-case .appeared:
-    return .action { _ in .loadConfig }   // processed synchronously before any external event
-case .loadConfig:
-    state.config = Config.default
-    return .task { input, env in … }
-```
-
-> **Warning:** Action chains run entirely on the `@MainActor` without yielding. A cycle — two events that each produce an `.action` pointing back at the other — will hang the main thread. Prefer `.task` for any work that could repeat or loop.
-
----
-
-### Fire-and-forget (button / gesture)
-
-`input` is callable directly. Use it anywhere a `() -> Void` closure is expected.
-
-```swift
-Button("Retry", action: input(.retry))       // callAsFunction — enqueues on MainActor
-Toggle("Sync", isOn: $state.syncEnabled)
-    .onChange(of: state.syncEnabled) { input(.syncToggled($0)) }
-```
-
----
-
-### Cancel before starting
-
-`.sequence` runs effects left-to-right. Useful when you need to cancel a stale task before issuing a new one in the same update step.
-
-```swift
-// update:
-case .refresh:
-    return .sequence([.cancel("load"), .task(name: "load") { … }])
-```
-
----
-
-### Await a sub-operation from another task
-
-From inside a `.task`, use `perform(_:)` to drive the FSM and wait for the state change to settle before continuing.
-
-```swift
-return .task { input, env in
-    await input.perform(.prepareUpload)   // waits for prepareUpload's full effect chain
-    let result = await env.upload(…)
-    await input.perform(.uploadFinished(result))
-}
-```
-
----
-
-### Observe an external `@Observable` store
-
-Use `.observe` to mirror a property from an external `@Observable` object into `ViewState`. The handler is called with the initial value immediately and again on every subsequent change. The named task is cancelled automatically when the view disappears.
-
-Two overloads are available depending on where the observable object comes from.
-
-**When the store lives in `Env`** — use the env key path overload. The object is resolved inside the task, so nothing is captured at `update` time:
-
-```swift
-struct Env: Identifiable {
-    let id: UUID = .init()
-    let store: CounterStore       // an @Observable @MainActor object
-}
-
-// update:
-case .start:
-    return .observe(\.store, keyPath: \.count, name: "observe-count") { input, count in
-        await input.perform(.countChanged(count))  // perform waits before the next cycle
-    }
-
-case .countChanged(let count):
-    state.count = count   // the only path that writes the mirrored value
-    return nil
-
-case .incrementTapped:
-    return .task { _, env in
-        await env.store.send(.increment)  // write via the store's own event API
-    }
-```
-
-**When the store comes from elsewhere** — for example imported into the view by a previous event — use the direct overload and pass the object itself:
-
-```swift
-// update:
-case .storeReceived(let store):
-    state.store = store
-    return .observe(store, keyPath: \.count, name: "observe-count") { input, count in
-        await input.perform(.countChanged(count))
-    }
-```
-
-The effect holds the object weakly; the observation loop exits automatically if the object is deallocated before the task is cancelled.
-
-> **Requires** iOS 17 / macOS 14 or later (the `@Observable` macro minimum deployment).
-
----
-
-## Contributing
-
-Contributions are welcome. Please follow the [Git workflow](Documentation/GitWorkflow.md) used in this project.
-
-This project uses [Conventional Commits](https://www.conventionalcommits.org/) for all commit messages. After cloning, run the following once to activate the commit message template:
-
-```bash
-git config commit.template .github/commit-template
-```
-
-The template is included in the repository at `.github/commit-template`.
-
----
+- [Recipes](Documentation/Recipes.md)
+- [SwiftUI first](Documentation/SwiftUIFirst.md)
+- [Taming async tasks in SwiftUI views](Documentation/TamingAsyncTasksInSwiftUIViews.md)
+- [Bridging event-driven and imperative code](Documentation/BridgingEventDrivenAndImperative.md)
 
 ## License
 

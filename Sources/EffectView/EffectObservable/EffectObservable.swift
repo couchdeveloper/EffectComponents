@@ -75,7 +75,7 @@ public final class EffectObservable<
         if let event = initialEvent {
             Task {
                 do {
-                    try await send(event, input: _input, continuation: nil)
+                    try await send(event, input: _input)
                 } catch {
                     print("could not process initial event: \(error)")
                     // TODO: consider sending a control event
@@ -121,7 +121,7 @@ public final class EffectObservable<
             throw RuntimeUnavailable.actorCancelled
         }
         do {
-            try await send(event, input: _input, continuation: nil)
+            try await send(event, input: _input)
         } catch {
             let boundaryError = runtimeBoundaryError(for: error)
             if let runtimeUnavailable = boundaryError as? RuntimeUnavailable {

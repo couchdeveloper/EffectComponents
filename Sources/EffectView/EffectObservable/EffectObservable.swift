@@ -84,6 +84,7 @@ public final class EffectObservable<
         }
     }
     
+    @_optimize(none) // https://github.com/swiftlang/swift/issues/82523
     isolated deinit {
         cancel()
     }

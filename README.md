@@ -3,21 +3,26 @@
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fcouchdeveloper%2FEffectView%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/couchdeveloper/EffectView)
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fcouchdeveloper%2FEffectView%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/couchdeveloper/EffectView)
 
-EffectView is for SwiftUI developers who are tired of ViewModels that keep absorbing async methods, loading flags, `Task` handles, cancellation logic, and UI glue.
+EffectView is a SwiftUI library for event-driven state management.
 
-It gives your view one event-driven place where state changes are decided.
+Here, an *effect* means follow-up work caused by a state transition: starting a task, calling a service, waiting, cancelling, observing, or sending the next event back into the system.
+
+You can think of it as SwiftUI's `task` modifier taken further. Instead of attaching async work ad hoc to views, you return effects from `update`, and the runtime tracks, replaces, cancels, and routes that work by event.
+
+EffectView is for SwiftUI developers who are tired of ViewModels that keep absorbing async methods, loading flags, `Task` handles, cancellation logic, and UI glue. It gives your view one event-driven place where state changes are decided.
 
 ## The problem
 
-Most ViewModels start small and end up like this:
+Most ViewModels start small and quickly turn into this:
 
-- button handlers mutate state
-- async callbacks mutate state
-- refresh and search race each other
-- old work finishes late and overwrites fresh UI
-- tests have to drive a whole reference type instead of one transition function
+- button actions and `task` modifiers mutate state
+- view-scoped tasks are cancelled when the view disappears, while deliberate cancellation stays awkward
+- ViewModel logic starts fighting race conditions
+- logic gets split across view, ViewModel, and model
+- two-way bindings further complicate the code and edge cases get missed
+- tests get harder to write, and mocks replace logic instead of verifying it
 
-The issue is usually not the architecture name. The issue is that state changes are spread across too many places.
+The SwiftUI `task` modifer behavior is often surprising in practice. A timer started from a tab's root view is cancelled when the user switches tabs, then restarted when the view appears again. Work you expected to keep running gets torn down and started again just because the view went off-screen.
 
 ## The solution
 
@@ -85,7 +90,7 @@ enum SearchFeature: Transducer {
 
 `update` is the only place that decides how the feature changes.
 
-When `update` returns `nil`, processing stops there. When `update` returns `.run(id: "search")`, the runtime starts that async job, tracks it by identifier, and routes follow-up events back through `update`.
+When `update` returns `nil`, processing stops there. When `update` returns `.run(id: "search")`, the runtime starts that async job, tracks it by identifier, and routes follow-up events back through `update`. That task can also be cancelled in the update function by its identifier.
 
 That means no `Task?` stored in a ViewModel, no ad-hoc mutation from random callbacks, and no guessing where the last state change came from.
 

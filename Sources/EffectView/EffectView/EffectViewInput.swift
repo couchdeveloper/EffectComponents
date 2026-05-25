@@ -1,3 +1,5 @@
+import Foundation
+
 /// A `Sendable` handle for dispatching events into the effect engine.
 ///
 /// `EffectViewInput` provides three dispatch strategies with different semantics:
@@ -22,16 +24,19 @@
 /// - `Event`: The event type dispatched into the state machine.
 /// - `Output`: The value returned by ``request(_:)``.
 ///   Use `Void` when no return value is needed.
-public struct EffectViewInput<Event, Output>: TransducerInput, Sendable {
+public struct EffectViewInput<Event, Output>: TransducerInput, Identifiable, Sendable {
     
     @MainActor
     init(_ send: Send<Event, EffectViewInput, Output>) {
         self._send = { @MainActor (event, input, continuation) async throws -> Void in
             try await send(event, input: input, continuation: continuation)
         }
+        id = send.id
     }
     
     let _send: @MainActor (Event, EffectViewInput, Continuation<Output>?) async throws -> Void
+    
+    public let id: UUID
     
     
     /// Sends the given event into the transducer.
@@ -162,3 +167,9 @@ public struct EffectViewInput<Event, Output>: TransducerInput, Sendable {
     }
 }
 
+
+extension EffectViewInput: Equatable {
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        return lhs.id == rhs.id
+    }
+}

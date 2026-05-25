@@ -145,6 +145,42 @@ struct EffectViewTests {
         }
     }
 
+    @Test func inputIdentityRemainsStableAcrossRerenders() async throws {
+        enum T: Transducer {
+            struct State: Equatable { var count = 0 }
+            enum Event: Sendable { case increment }
+
+            static func update(_ state: inout State, event: Event) -> Effect? {
+                state.count += 1
+                return nil
+            }
+        }
+
+        var capturedInputs: [EffectViewInput<T.Event, T.Output>] = []
+        let rerenderExpectation = Expectation()
+        let timeout: UInt64 = 5_000_000_000
+
+        try await testView(initialState: T.State()) { binding in
+            EffectView(of: T.self, state: binding) { state, input in
+                Text("\(state.count)")
+                    .onAppear {
+                        capturedInputs.append(input)
+                    }
+                    .onChange(of: state.count) { _, _ in
+                        capturedInputs.append(input)
+                        rerenderExpectation.fulfill()
+                    }
+            }
+        } expect: {
+            #expect(capturedInputs.count == 1)
+            try await capturedInputs[0].send(.increment)
+            try await rerenderExpectation.await(nanoseconds: timeout)
+            #expect(capturedInputs.count == 2)
+            #expect(capturedInputs[0] == capturedInputs[1])
+            #expect(capturedInputs[0].id == capturedInputs[1].id)
+        }
+    }
+
     // MARK: - initialEvent
 
     @Test func initialEventFiresOnAppear() async throws {

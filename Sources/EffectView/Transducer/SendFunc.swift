@@ -1,8 +1,10 @@
+import Foundation
+
 /// Low-level runtime handle for routing events and control messages.
 ///
 /// Most feature code should use higher-level entry points such as
 /// ``EffectView/Input-swift.struct`` or ``EffectObservable/Input-swift.struct``.
-public struct Send<Event, Input, Output>
+public struct Send<Event, Input, Output>: Identifiable
 where Input: TransducerInput<Event, Output> & Sendable {
     typealias TaggedEvent = EffectView::TaggedEvent<Event>
     typealias SendFunc = (isolated any Actor, Event, Input?, Continuation<Output>?) async throws -> Void
@@ -14,7 +16,10 @@ where Input: TransducerInput<Event, Output> & Sendable {
     init(send: @escaping SendFunc, control: @escaping ControlFunc) {
         self.send = send
         self.control = control
+        self.id = .init()
     }
+    
+    public let id: UUID
 
     /// Sends `event` through the runtime using the provided `input` handle.
     ///

@@ -18,20 +18,56 @@ Button("Retry") {
 
 `post` is fire-and-forget. It schedules the event and returns immediately.
 
-## Wait until a flow has settled
+## Pull to refresh from the child view
 
 Use `request` when the caller should wait until the whole triggered flow is done.
 
 ```swift
-List(state.items, id: \.id) { item in
-    Text(item.title)
-}
-.refreshable {
-    try? await input.request(.refresh)
+struct ProductsListView: View {
+    struct Query: Equatable {
+        var searchText = ""
+        var selectedCategory: String?
+        var sortField: SortField?
+    }
+
+    let products: [Product]
+    let input: ProductsView.Input
+
+    @State private var query = Query()
+
+    var body: some View {
+        List(products) { product in
+            Text(product.title)
+        }
+        .refreshable {
+            try? await input.request(.refresh(
+                searchText: query.searchText,
+                category: query.selectedCategory,
+                sortField: query.sortField
+            ))
+        }
+    }
 }
 ```
 
 This is the right choice for `.refreshable`, because SwiftUI keeps the spinner visible while the request is still in flight.
+
+It is also a good shape for diffing: let the child view that owns the query state perform the refresh itself, instead of receiving an ad-hoc `refresh` closure from the parent.
+
+Passing `input` down is stable for the lifetime of the runtime, so SwiftUI can treat the child view's action handle as unchanged across parent reevaluations.
+
+## Prefer stable `input` over ad-hoc action closures
+
+If a child view just needs to send or request events, pass `input` directly.
+
+```swift
+ProductsListView(
+    products: content.items,
+    input: input
+)
+```
+
+That keeps the child boundary deterministic. A freshly-created closure from the parent is just a new callable value every render. `EffectViewInput` instead represents the same runtime handle until the runtime itself is recreated.
 
 ## Debounce or restart search automatically
 

@@ -2,7 +2,7 @@
 import Foundation
 import Testing
 import SwiftUI
-import EffectView
+import EffectComponents
 
 #if canImport(UIKit)
 import UIKit

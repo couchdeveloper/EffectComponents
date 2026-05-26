@@ -6,7 +6,7 @@ import Foundation
 /// ``EffectView/Input-swift.struct`` or ``EffectObservable/Input-swift.struct``.
 public struct Send<Event, Input, Output>: Identifiable
 where Input: TransducerInput<Event, Output> & Sendable {
-    typealias TaggedEvent = EffectView::TaggedEvent<Event>
+    typealias TaggedEvent = EffectComponents::TaggedEvent<Event>
     typealias SendFunc = (isolated any Actor, Event, Input?, Continuation<Output>?) async throws -> Void
     typealias ControlFunc = (isolated any Actor, ControlEvent) throws -> Void
 

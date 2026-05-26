@@ -9,7 +9,7 @@ In short, `EffectView` is an event-driven runtime built around a finite state ma
 At a high level, effects come in two forms:
 
 - Actions are inline effect steps in the current computation cycle. Unlike tasks, they remain part of the current event chain even when they suspend.
-- tasks are managed asynchronous operations; they run outside the current reduction step, may be tracked by logical identifier, and can feed events back into the system later
+- Tasks are managed asynchronous operations; they run outside the current reduction step, may be tracked by logical identifier, and can feed events back into the system later.
 
 Two earlier articles describe adjacent concerns from the public API side:
 
@@ -162,7 +162,7 @@ A fire-and-forget call schedules work and returns immediately. The caller does n
 
 This is intentionally the weakest back pressure mode. It is useful, but it is also the deliberate escape hatch: callers can create pending work without themselves awaiting admission.
 
-### Synchronous disaptch (`send`)
+### Synchronous dispatch (`send`)
 
 A synchronous `send` means:
 
@@ -377,6 +377,6 @@ The runtime is intentionally built around four ideas:
 3. caller suspension provides the primary back pressure mechanism
 4. `TaskManager` centralizes shutdown and task-lifecycle semantics
 
-This gives `EffectView` a runtime that stays small in code size while still supporting async actions, request/response bridging, runtime-managed tasks, immediate interruption, and future runtime control features.
+This gives EffectComponents a runtime that stays small in code size while still supporting async actions, request/response bridging, runtime-managed tasks, immediate interruption, and future runtime control features.
 
 The design is intentional, not accidental.

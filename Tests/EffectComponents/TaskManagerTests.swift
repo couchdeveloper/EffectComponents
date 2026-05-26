@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import EffectView
+@testable import EffectComponents
 
 private enum TaskManagerFailure: Error, Equatable {
     case boom

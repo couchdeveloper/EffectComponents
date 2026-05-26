@@ -1,8 +1,8 @@
 # Architectural Comparison
 
-EffectView is not a new idea. It translates a family of well-established patterns — Elm, Redux, Elixir/GenServer — into idiomatic SwiftUI, using Swift's own concurrency model rather than fighting it.
+EffectComponents is not a new idea. It translates a family of well-established patterns — Elm, Redux, Elixir/GenServer — into idiomatic SwiftUI, using Swift's own concurrency model rather than fighting it.
 
-This document maps EffectView against the patterns iOS developers are most likely to know, across five dimensions that matter in practice:
+This document maps EffectComponents against the patterns iOS developers are most likely to know, across five dimensions that matter in practice:
 
 1. **State model** — what kinds of state exist, who owns each kind, and who can mutate it
 2. **Effect/side-effect model** — how async work is described and executed
@@ -52,7 +52,7 @@ A global store holds the entire application state. A single pure *reducer* funct
 
 ### The Composable Architecture (TCA)
 
-The most direct comparison to EffectView. TCA targets SwiftUI with a Redux-shaped architecture: a `@Reducer` macro generates a store, actions map to state mutations and `Effect<Action>` return values.
+The most direct comparison to EffectComponents. TCA targets SwiftUI with a Redux-shaped architecture: a `@Reducer` macro generates a store, actions map to state mutations and `Effect<Action>` return values.
 
 **State model:** Composable tree of child stores. Parent features compose child features using `Scope` and `IfLetStore`. Shared state is managed via `@Shared` property wrappers with explicit persistence strategies.
 
@@ -86,7 +86,7 @@ The direct ancestor of all patterns in this family. An Elm application is define
 
 The most conceptually illuminating comparison. A `GenServer` is an actor with a single `handle_call` / `handle_cast` callback — the structural equivalent of `update`. State is private to the process; all mutations go through the callback; side effects are either synchronous return values or out-of-band messages sent to other processes.
 
-Phoenix LiveView's `handle_event` maps almost directly to EffectView's `update`: it receives the current socket (state), an event name, and parameters, mutates the socket, and optionally pushes async work via `Task.async` or `send_update`.
+Phoenix LiveView's `handle_event` maps almost directly to a transducer's `update`: it receives the current socket (state), an event name, and parameters, mutates the socket, and optionally pushes async work via `Task.async` or `send_update`.
 
 **State model:** Process-local. Each LiveView socket / GenServer process owns its own state exclusively. Shared state between processes requires explicit message passing or a shared ETS table — it is never implicit.
 
@@ -100,9 +100,9 @@ Phoenix LiveView's `handle_event` maps almost directly to EffectView's `update`:
 
 ---
 
-## EffectView
+## EffectComponents
 
-EffectView translates the Elm/GenServer model into idiomatic SwiftUI — using `@State`, structured concurrency, and `@MainActor` as the runtime rather than a custom one.
+EffectComponents translates the Elm/GenServer model into idiomatic SwiftUI — using `@State`, structured concurrency, and `@MainActor` as the runtime rather than a custom one.
 
 **State model:** Three kinds of state are structurally distinct:
 
@@ -198,7 +198,7 @@ This is a stronger encapsulation boundary than TCA's store, which is deliberatel
 
 ## Summary
 
-| | MVVM | Redux | TCA | Elm | Elixir/GenServer | EffectView |
+| | MVVM | Redux | TCA | Elm | Elixir/GenServer | EffectComponents |
 |---|---|---|---|---|---|---|
 | **Ephemeral state owner** | ViewModel class | Global store | Feature store | Model value | Process-local | `ViewState` value |
 | **Shared state access** | Direct reference | Global selector | `@Shared` wrapper | Message-passing only | Explicit IPC | Read-only slice via `.observe` |
@@ -210,6 +210,6 @@ This is a stronger encapsulation boundary than TCA's store, which is deliberatel
 | **Dispatch levels** | Synchronous call | Fire-and-forget | Fire-and-forget (+ async `send` inside effects) | Fire-and-forget | `call` (sync) / `cast` (async) | `post` / `send` / `request` |
 | **Test surface** | Full class construction | Reducer pure function | `TestStore` harness | Pure `update` function | Process message passing | Static pure function |
 
-The common thread in the well-designed patterns (Elm, GenServer, TCA, EffectView) is the same: a single authoritative transition function that owns all state mutations and returns effect descriptions. The differences are in scope (global vs. local), dispatch semantics, task lifecycle management, and how much framework ceremony is required to express the pattern.
+The common thread in the well-designed patterns (Elm, GenServer, TCA, EffectComponents) is the same: a single authoritative transition function that owns all state mutations and returns effect descriptions. The differences are in scope (global vs. local), dispatch semantics, task lifecycle management, and how much framework ceremony is required to express the pattern.
 
-EffectView's position is that the SwiftUI runtime already provides the scope, lifecycle, and concurrency model — the only missing piece is a structured way to describe and manage effects. The library adds that piece and nothing else.
+EffectComponents' position is that the SwiftUI runtime already provides the scope, lifecycle, and concurrency model — the only missing piece is a structured way to describe and manage effects. The library adds that piece and nothing else.

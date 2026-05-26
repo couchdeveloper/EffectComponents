@@ -1,6 +1,6 @@
 # Recipes
 
-Short, practical snippets for common EffectView patterns.
+Short, practical snippets for common EffectComponents patterns.
 
 ## Post an event from the view
 
@@ -17,8 +17,8 @@ Button("Retry") {
 ```
 
 Note: in this case it is safe to write `try?` since we can ignore the error when 
-attempting to dispatch an event when it happens within the button actions or 
-whithin the onChange closure.
+attempting to dispatch an event when it happens within the button actions or
+within the onChange closure.
 
 
 

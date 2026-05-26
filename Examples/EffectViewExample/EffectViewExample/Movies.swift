@@ -1,5 +1,5 @@
 import SwiftUI
-import EffectView
+import EffectComponents
 import Foundation
 
 enum Movies {

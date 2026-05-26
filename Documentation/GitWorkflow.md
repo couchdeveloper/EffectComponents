@@ -172,7 +172,7 @@ git push --force-with-lease origin feature/my-feature # after a rebase
 ## 7. Open a Pull Request
 
 ```bash
-open https://github.com/couchdeveloper/EffectView/compare/main...feature/my-feature?expand=1
+open https://github.com/couchdeveloper/EffectComponents/compare/main...feature/my-feature?expand=1
 ```
 
 Fill in title and body, then click **Create pull request**.

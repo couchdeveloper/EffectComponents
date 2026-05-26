@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import EffectView
+import EffectComponents
 
 #if false // Feature run is not yet implemented
 @Suite("Run stub")

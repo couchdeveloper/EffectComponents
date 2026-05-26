@@ -1,4 +1,4 @@
-# Correct by Construction: State Machines and MVI with EffectView
+# Correct by Construction: State Machines and MVI with EffectComponents
 
 The [previous article](TamingAsyncTasksInSwiftUIViews.md) solved a mechanical problem: `.task` doesn't give you the tools to manage task lifetimes properly. This article addresses a deeper one.
 
@@ -11,13 +11,13 @@ When behaviour lives inside closures, async functions, and stored properties sca
 - Can two pieces of state ever be in contradiction with each other?
 - What happens if the user taps a button while something is already loading?
 
-EffectView addresses this by pulling all logic into a single, pure function.
+EffectComponents addresses this by pulling all logic into a single, pure function.
 
 ---
 
 ## The update function
 
-The heart of EffectView is the update function:
+The heart of EffectComponents is the update function:
 
 ```swift
 (inout State, Event) -> Effect<Event, Env>?
@@ -59,7 +59,7 @@ Without an FSM, a search screen typically accumulates state like this:
 
 There are immediately several illegal combinations: `isLoading == true && errorMessage != nil`. `results.isEmpty && !isLoading && errorMessage == nil` — is that idle, or empty results? Tests have to enumerate these combinations and hope they've covered the right ones.
 
-With EffectView you model state as a Swift enum instead:
+With EffectComponents you model state as a Swift enum instead:
 
 ```swift
 enum SearchState {
@@ -246,9 +246,9 @@ Concurrency exists — tasks genuinely run in the background — but concurrency
 
 ## MVI in practice
 
-EffectView implements the **Model–View–Intent** (MVI) pattern:
+EffectComponents implements the **Model–View–Intent** (MVI) pattern:
 
-| MVI concept | EffectView equivalent |
+| MVI concept | EffectComponents equivalent |
 |---|---|
 | **Model** | `State` — the single source of truth |
 | **Intent** | `Event` — user actions and system callbacks |

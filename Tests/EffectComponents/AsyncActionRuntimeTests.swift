@@ -1,5 +1,5 @@
 import Testing
-@testable import EffectView
+@testable import EffectComponents
 
 #if canImport(Observation)
 

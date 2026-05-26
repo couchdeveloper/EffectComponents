@@ -146,7 +146,7 @@ The view renders state and posts events. The feature logic stays in `update`.
 ## Installation
 
 ```swift
-.package(url: "https://github.com/couchdeveloper/EffectComponents.git", from: "0.1.0")
+.package(url: "https://github.com/couchdeveloper/EffectComponents.git", from: "0.5.0")
 ```
 
 Add `EffectComponents` to your target dependencies.

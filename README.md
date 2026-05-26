@@ -27,13 +27,15 @@ The SwiftUI `task` modifier behavior is often surprising in practice. A timer st
 
 ## The solution
 
-With `EffectView`, you move a feature's logic into a small stand-alone enum that declares `State`, `Event`, and one `update` function.
+With `EffectView`, you move a feature's logic into a small stand-alone enum that declares `State`, `Event`, one `update` function, and optionally an `output` function for request-style calls that return a result.
 
 `update` is a plain synchronous function: it receives the current state and an event, changes state, and decides what should happen next. It does not call services, start tasks, or cause side effects itself.
 
-If more work is needed, `update` returns an effect: just a function, possibly async, that the runtime executes one step later and where those side effects happen. That split keeps the logic easy to read and easy to test.
+If more work is needed, `update` returns an effect: a value that describes the next operation for the runtime. Some effects start asynchronous work, while others synchronously feed another event back into `update` in the same dispatch. That means one external event can unfold through an immediate chain of internal events before the computation settles. The split keeps the logic easy to read and easy to test.
 
-If you know Redux or TCA, a `Transducer` plays a similar role to what those architectures often call a reducer. `EffectComponents` uses "transducer" because `update` does more than reduce state from an event: it also emits the next effect for the runtime to execute.
+For flows that need a value back, callers use `try await input.request(...)`. If the transducer defines `output(state:event:)`, the request returns the output produced for the last event in the settled computation chain.
+
+If you know Redux or TCA, a `Transducer` plays a similar role to what those architectures often call a reducer. `EffectComponents` uses "transducer" because `update` does more than reduce state from an event: it can drive an immediate effect/event chain, start managed async work, and produce an output for request-style dispatch.
 
 The example below is a small debounced search feature. Read it as a transition table: query changes put the feature into a loading state and start a named search task; response events then settle the state back into either results or an error.
 

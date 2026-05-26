@@ -1,6 +1,6 @@
 import SwiftUI
 import Foundation
-import EffectView
+import EffectComponents
 
 @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
 enum RemoteCounter {

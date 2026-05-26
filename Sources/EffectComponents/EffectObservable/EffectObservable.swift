@@ -27,7 +27,7 @@ public final class EffectObservable<
     public typealias Effect = T.Effect
     
     typealias Storage = UnownedReferenceKeyPathStorage<EffectObservable, State>
-    typealias Send = EffectView::Send<Event, Input, Output>
+    typealias Send = EffectComponents::Send<Event, Input, Output>
     
 
     /// Current transducer state published through Swift Observation.

@@ -203,11 +203,11 @@ case .queryChanged(let q):
 
 ---
 
-## Adding `EffectView` to your project
+## Adding EffectComponents to your project
 
 ```swift
 // Package.swift
-.package(url: "https://github.com/couchdeveloper/EffectView.git", from: "0.1.0")
+.package(url: "https://github.com/couchdeveloper/EffectComponents.git", from: "0.1.0")
 ```
 
 The library is around 200 lines of source — a focused primitive, not a framework.

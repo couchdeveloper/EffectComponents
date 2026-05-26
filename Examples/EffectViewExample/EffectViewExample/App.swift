@@ -1,5 +1,5 @@
 import SwiftUI
-import EffectView
+import EffectComponents
 
 @main
 struct EffectViewExampleApp: App {

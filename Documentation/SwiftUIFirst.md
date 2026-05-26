@@ -4,7 +4,7 @@ Modern SwiftUI development has accumulated a rich set of companion patterns: Vie
 
 These patterns all solve real problems. But they solve them *outside* SwiftUI — as a layer on top of it. The result is that every project ends up with two architectures: SwiftUI's own model and the one the team bolted on.
 
-EffectView takes a different position. It asks: what if SwiftUI's own mechanisms are sufficient, and the only thing missing is structured effect management?
+EffectComponents takes a different position. It asks: what if SwiftUI's own mechanisms are sufficient, and the only thing missing is structured effect management?
 
 ---
 
@@ -22,7 +22,7 @@ SwiftUI is not a rendering library. It is an architecture.
 
 These are not implementation details. They are the intended architecture for SwiftUI applications. `Binding` is the dependency injection mechanism for state. `Environment` is the dependency injection mechanism for services. View identity is the lifecycle. All of these are first-class, framework-supported tools.
 
-The only gap is **effect management**: triggering, naming, cancelling, and coordinating async tasks in response to logic rather than rendering. That is what EffectView adds.
+The only gap is **effect management**: triggering, naming, cancelling, and coordinating async tasks in response to logic rather than rendering. That is what EffectComponents adds.
 
 ---
 
@@ -53,7 +53,7 @@ This function is not an object. It has no stored properties, no lifecycle, and n
 
 Dependency injection frameworks exist to solve one problem: getting concrete implementations of services into the code that needs them, without coupling the two directly. SwiftUI's `@Environment` already does this. It is hierarchical, it propagates automatically, and it can be overridden at any level of the view tree.
 
-EffectView connects to it through `EnvReader` — a four-line wrapper around `@Environment`. No registration, no container, no reflection, no macros.
+EffectComponents connects to it through `EnvReader` — a four-line wrapper around `@Environment`. No registration, no container, no reflection, no macros.
 
 Dependencies are declared as structs of closures in the feature module. Concrete implementations are assigned in a single `EnvironmentValues` extension in the glue layer. Test doubles are struct literals.
 
@@ -129,7 +129,7 @@ That function requires no framework to test, no mocking library, and no async te
 ## Getting started
 
 ```swift
-.package(url: "https://github.com/couchdeveloper/EffectView", from: "0.1.0")
+.package(url: "https://github.com/couchdeveloper/EffectComponents.git", from: "0.1.0")
 ```
 
 Start with the simplest case — one state enum, one event enum, one `update` function — and expand from there. The pattern is the same at every scale.

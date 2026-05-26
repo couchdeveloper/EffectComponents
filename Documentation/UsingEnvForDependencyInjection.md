@@ -172,7 +172,7 @@ struct MovieSearchView: View {
 }
 ```
 
-`EnvReader` is a thin wrapper around `@Environment`; it exists purely for ergonomics at the `EffectView` call site. The value it captures is passed to `initialEnv:`, and EffectView takes ownership from there — forwarding it to every `.run`, `.request`, and `.action` for the lifetime of the view.
+`EnvReader` is a thin wrapper around `@Environment`; it exists purely for ergonomics at the `EffectView` call site. The value it captures is passed to `initialEnv:`, and `EffectView` takes ownership from there — forwarding it to every `.run`, `.request`, and `.action` for the lifetime of the view.
 
 Note that the transducer type (`MovieSearchLogic.self`) is passed directly rather than constructing an inline closure. This keeps the view body free of logic and makes the transition function easily findable and independently testable.
 
@@ -228,4 +228,4 @@ The feature module declares *what* it needs (closure types). The glue layer deci
 
 This is dependency injection without a framework, without reflection, and without protocols. The only mechanism is function values — which Swift has had since day one.
 
-*Next: [Testing EffectView end-to-end](TestingEffectView.md)*
+*Next: [Bridging event-driven and imperative code](BridgingEventDrivenAndImperative.md)*

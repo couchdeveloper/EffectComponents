@@ -1,15 +1,16 @@
-# EffectView
+# EffectComponents
 
-[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fcouchdeveloper%2FEffectView%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/couchdeveloper/EffectView)
-[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fcouchdeveloper%2FEffectView%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/couchdeveloper/EffectView)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fcouchdeveloper%2FEffectComponents%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/couchdeveloper/EffectComponents)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fcouchdeveloper%2FEffectComponents%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/couchdeveloper/EffectComponents)
 
-EffectView is a SwiftUI library for event-driven state management.
+EffectComponents is a SwiftUI-first library for building composable finite-state components that emit and manage effects.
 
 Here, an *effect* means follow-up work caused by a state transition: starting a task, calling a service, waiting, cancelling, observing, or sending the next event back into the system.
 
-You can think of it as SwiftUI's `task` modifier taken further. Instead of attaching async work ad hoc to views, you return effects from `update`, and the runtime tracks, replaces, cancels, and routes that work by event.
+EffectComponents contains a SwiftUI view `EffectView` that is specifically useful for SwiftUI developers who are tired of ViewModels that keep absorbing async methods, loading flags, `Task` handles, cancellation logic, and UI glue. It gives your view one event-driven place where state changes are decided.
 
-EffectView is for SwiftUI developers who are tired of ViewModels that keep absorbing async methods, loading flags, `Task` handles, cancellation logic, and UI glue. It gives your view one event-driven place where state changes are decided.
+You can think of `EffectView` as SwiftUI's `task` modifier taken further. Instead of attaching async work ad hoc to views, you return effects from `update`, and the runtime tracks, replaces, cancels, and routes that work by event.
+
 
 ## The problem
 
@@ -26,18 +27,18 @@ The SwiftUI `task` modifier behavior is often surprising in practice. A timer st
 
 ## The solution
 
-With EffectView, you move a feature's logic into a small stand-alone enum that declares `State`, `Event`, and one `update` function.
+With `EffectView`, you move a feature's logic into a small stand-alone enum that declares `State`, `Event`, and one `update` function.
 
 `update` is a plain synchronous function: it receives the current state and an event, changes state, and decides what should happen next. It does not call services, start tasks, or cause side effects itself.
 
 If more work is needed, `update` returns an effect: just a function, possibly async, that the runtime executes one step later and where those side effects happen. That split keeps the logic easy to read and easy to test.
 
-If you know Redux or TCA, a `Transducer` plays a similar role to what those architectures often call a reducer. EffectView uses "transducer" because `update` does more than reduce state from an event: it also emits the next effect for the runtime to execute.
+If you know Redux or TCA, a `Transducer` plays a similar role to what those architectures often call a reducer. `EffectComponents` uses "transducer" because `update` does more than reduce state from an event: it also emits the next effect for the runtime to execute.
 
 The example below is a small debounced search feature. Read it as a transition table: query changes put the feature into a loading state and start a named search task; response events then settle the state back into either results or an error.
 
 ```swift
-import EffectView
+import EffectComponents
 import SwiftUI
 
 enum SearchFeature: Transducer {
@@ -145,10 +146,10 @@ The view renders state and posts events. The feature logic stays in `update`.
 ## Installation
 
 ```swift
-.package(url: "https://github.com/couchdeveloper/EffectView.git", from: "0.1.0")
+.package(url: "https://github.com/couchdeveloper/EffectComponents.git", from: "0.1.0")
 ```
 
-Add `EffectView` to your target dependencies.
+Add `EffectComponents` to your target dependencies.
 
 ## Learn more
 

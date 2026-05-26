@@ -1,6 +1,6 @@
 import SwiftUI
 import Foundation
-import EffectView
+import EffectComponents
 
 enum Counter {
     enum Views {}

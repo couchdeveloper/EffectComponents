@@ -1,3 +1,5 @@
+#if false // Feature run is not yet implemented
+
 extension Transducer where Effect == TransducerEffect<Event, Env, Output>, Env: Sendable, Output: Sendable {
     
     /// Runs the transducer runtime directly with an explicit low-level send handle.
@@ -28,10 +30,11 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output>, Env: 
     }
 }
 
-// TODO: when implemente, remove it
+// TODO: when implemented, remove it
 /// Placeholder error for the unfinished low-level ``Transducer/run(systemActor:send:initialState:input:)`` API.
 public enum RunError: Error, Sendable {
     /// The requested runtime entry point has not been implemented yet.
     case notImplemented
 }
 
+#endif

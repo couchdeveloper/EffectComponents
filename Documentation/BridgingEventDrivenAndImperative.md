@@ -24,6 +24,10 @@ spinner disappears before the data arrives:
 }
 ```
 
+Note: in this case it is safe to write `try?` since we can ignore the error when 
+attempting to dispatch an event when it happens within the `refresh` modifier. 
+
+
 The same issue arises for any SwiftUI feature that awaits an async closure:
 `task(id:)`, `searchable` with an async suggestions closure, button actions in
 `.toolbar`, sheet confirmations, and so on.
@@ -83,6 +87,9 @@ consequence of that event.
 }
 ```
 
+Note: in this case it is safe to write `try?` since we can ignore the error when 
+attempting to dispatch an event when it happens within the `refresh` modifier. 
+
 `update` handles `.refresh` by returning a `.task` that fetches data and
 sends `.loaded(data)`. `request` resumes when the task closure returns.
 
@@ -100,13 +107,17 @@ Button("Save") {
 }
 ```
 
+Note: in this case it is safe to write `try?` since we can ignore the error when 
+attempting to dispatch an event when it happens within the button action. 
+
+
 ### Async `task(id:)`
 
 When the app regains foreground, re-fetch only if the previous task has
 settled:
 
 ```swift
-.task(id: appPhase) {
+task(id: appPhase) {
     if appPhase == .active {
         try? await input.request(.resumeIfNeeded)
     }

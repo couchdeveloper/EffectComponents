@@ -1,8 +1,7 @@
 import Foundation
 
-// TODO: we can simplify this. Rename to "CancellationError". CancellationError may have an underlying error specifying the detailed reason.
 /// Boundary error indicating that the runtime can no longer accept or complete work.
-public enum RuntimeUnavailable: LocalizedError, Equatable, Sendable {
+public enum RuntimeError: LocalizedError, Equatable, Sendable {
     /// The host cancelled the runtime before this call could proceed.
     case actorCancelled
 
@@ -25,7 +24,6 @@ public enum RuntimeUnavailable: LocalizedError, Equatable, Sendable {
             return "The runtime is unavailable because it has forcibly terminated because of a critical error."
         case .cancelled:
             return "The runtime is unavailable because it has been cancelled."
-
         }
     }
 }
@@ -34,16 +32,8 @@ func runtimeBoundaryError(for error: any Swift.Error) -> any Swift.Error {
     if error is CancellationError {
         return error
     }
-    if let runtimeUnavailable = error as? RuntimeUnavailable {
+    if let runtimeUnavailable = error as? RuntimeError {
         return runtimeUnavailable
     }
-    return RuntimeUnavailable.systemError
-}
-
-enum RuntimeError: Swift.Error {
-    
-    // could not perform send, because Send is deallocated
-    case sendUnavailable
-    
-    case noInput
+    return RuntimeError.systemError
 }

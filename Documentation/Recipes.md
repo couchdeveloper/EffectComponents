@@ -16,6 +16,12 @@ Button("Retry") {
 }
 ```
 
+Note: in this case it is safe to write `try?` since we can ignore the error when 
+attempting to dispatch an event when it happens within the button actions or 
+whithin the onChange closure.
+
+
+
 `post` is fire-and-forget. It schedules the event and returns immediately.
 
 ## Pull to refresh from the child view
@@ -78,15 +84,15 @@ case .queryChanged(let query):
     state.query = query
     state.isLoading = true
 
-    return .run(id: "search") { input, env in
+    return run(id: "search") { input, env in
         try? await Task.sleep(for: .milliseconds(300))
         guard !Task.isCancelled else { return }
 
         do {
             let results = try await env.search(query)
-            try? input.post(.resultsLoaded(results))
+            try input.post(.resultsLoaded(results))
         } catch {
-            try? input.post(.searchFailed(error.localizedDescription))
+            try input.post(.searchFailed(error.localizedDescription))
         }
     }
 ```
@@ -100,14 +106,14 @@ Use `sequence` when one step should happen before another.
 ```swift
 case .refresh:
     state.isRefreshing = true
-    return .sequence([
-        .cancel("load"),
-        .run(id: "refresh") { input, env in
+    return sequence([
+        cancel("load"),
+        run(id: "refresh") { input, env in
             do {
                 let items = try await env.loadItems()
-                try? input.post(.loaded(items))
+                try input.post(.loaded(items))
             } catch {
-                try? input.post(.loadFailed(error.localizedDescription))
+                try input.post(.loadFailed(error.localizedDescription))
             }
         }
     ])
@@ -125,8 +131,8 @@ struct Env: Sendable {
 }
 
 case .startObserving:
-    return .observe(\.store, keyPath: \.count) { input, count in
-        try? await input.request(.countChanged(count))
+    return observe(\.store, keyPath: \.count) { input, count in
+        try await input.request(.countChanged(count))
     }
 
 case .countChanged(let count):

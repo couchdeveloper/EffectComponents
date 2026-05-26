@@ -156,13 +156,13 @@ The runtime exposes three relevant caller-facing modes:
 
 These modes differ in how much of the event chain the caller waits for, but they all rely on the same underlying serialization rules for regular events.
 
-### Fire-and-forget
+### Fire-and-forget dispatch (`post`)
 
 A fire-and-forget call schedules work and returns immediately. The caller does not wait for `compute(...)` to run.
 
 This is intentionally the weakest back pressure mode. It is useful, but it is also the deliberate escape hatch: callers can create pending work without themselves awaiting admission.
 
-### Synchronous send
+### Synchronous disaptch (`send`)
 
 A synchronous `send` means:
 
@@ -172,11 +172,48 @@ A synchronous `send` means:
 
 The important nuance is that "synchronous" here is semantic, not literally non-suspending. If an async action runs inline, `send` may suspend while still preserving single-entry regular event reduction.
 
-### Request
+### Request/response dispatch (`request`) 
 
 A request carries a continuation through the event chain until the chain terminates, transfers the continuation into a managed task, or throws out of `compute(...)`.
 
 This is the runtime's bridge between event-driven logic and ordinary async/await callers.
+
+### When dispatch fails 
+
+Dispatching an event into the runtime can fail for various reasons. For example: an internal event buffer may be full, the actor may have been cancelled, the actor may already be deinitialized, or the transducer may have been cancelled.
+
+Depending on the context, some of these failures are benign. For example, in a SwiftUI Button action: 
+
+```swift
+Button("Start") { 
+  send(.start) 
+}
+```
+In this case, when sending the "start" event fails, it is often not a critical error. A user may just try again.
+ 
+However, there are other cases where a failure means a critical error. For example, in an operation when it finishes and the transducer logic awaits and requires a completion event: 
+ 
+ ```swift
+ static func refreshMovies() -> Effect {
+    run(id: "refresh") { input, env in
+        let result = await env.movieFetch()
+        try? input(.fetchMoviesCompletion(result)) // Do not use `try?` when dispatching completion events
+    }
+}
+```   
+In the case above, if event dispatch fails and the error is ignored (`try?`), the transducer will never receive a completion event. This might mean it stays in "loading" mode indefinitely and silently ignores any other event unless it sees the completion event.
+
+Thus, when the event cannot be dispatched, it is better to forward the failure into the system, that is, letting it throw the error:
+ ```swift
+ static func refreshMovies() -> Effect {
+    run(id: "refresh") { input, env in
+        let result = await env.movieFetch()
+        try input(.fetchMoviesCompletion(result))
+    }
+}
+```
+The runtime now detects the error, treats it as a critical failure, and cancels the transducer. Now, the transducer "knows" it is in a failure mode, and any attempt to send events into it will fail early at the call site.
+
 
 ---
 

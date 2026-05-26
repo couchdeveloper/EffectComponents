@@ -26,7 +26,7 @@ In the most common implementation, `@Observable` properties are fully public and
 
 **Effect model:** Async work is launched imperatively. A method calls `Task { ... }` and the task is anonymous. If the same method is called twice, two tasks run concurrently against the same state, potentially interleaving writes in any order.
 
-**Task lifecycle:** Unmanaged. The developer manually holds `Task` handles and calls `.cancel()`. Easy to forget. Tasks outlive the view if the ViewModel is retained elsewhere.
+**Task lifecycle:** Unmanaged. The developer manually holds `Task` handles and calls `cancel()`. Easy to forget. Tasks outlive the view if the ViewModel is retained elsewhere.
 
 **Dispatch:** Direct method calls. `viewModel.loadMovies()` is synchronous: it starts a task and returns immediately. There is no way to await the *completion* of the state change the task will eventually cause — not without adding a separate async method or a continuation.
 
@@ -58,7 +58,7 @@ The most direct comparison to EffectView. TCA targets SwiftUI with a Redux-shape
 
 **Effect model:** `Effect<Action>` wraps async sequences or `Effect.run { send in ... }` closures. Effects dispatch further actions by calling `send(.someAction)` inside the closure. The reducer remains synchronous.
 
-**Task lifecycle:** Effects are identified by a `CancelID`. Cancellation requires dispatching a separate action that the reducer handles by returning `.cancel(id:)`. The framework manages the actual task. This works well but the cancellation logic is split from the creation logic.
+**Task lifecycle:** Effects are identified by a `CancelID`. Cancellation requires dispatching a separate action that the reducer handles by returning `cancel(id:)`. The framework manages the actual task. This works well but the cancellation logic is split from the creation logic.
 
 **Dispatch:** Fire-and-forget from outside the store. `store.send(.loadMovies)` enqueues the action. There is no API to await the completion of the effect chain. Inside `Effect.run`, `send` is async — it awaits the action being processed — but only for one level; there is no recursive settle.
 
@@ -119,7 +119,7 @@ ViewState ──(user action)──▶ update ──▶ effect ──▶ store.s
 
 **Effect model:** `update` returns an `Effect` value — a description, never an execution. The library executes it. `update` is synchronous, has no `async` annotation, and cannot perform work directly. The same event on the same state always produces the same `Effect` description.
 
-**Task lifecycle:** Tasks are created by returning `.run(id:)`, `.request(id:)`, or `.task(id:)` from `update`. They are cancelled by returning `.cancel(...)` from `update`, or automatically when the view's identity is torn down via `.id(...)`. Both creation and cancellation are outputs of the transition function — they live alongside state mutations in the same `switch`, subject to the same compiler exhaustiveness checks.
+**Task lifecycle:** Tasks are created by returning `run(id:)`, `request(id:)`, or `task(id:)` from `update`. They are cancelled by returning `cancel(...)` from `update`, or automatically when the view's identity is torn down via `.id(...)`. Both creation and cancellation are outputs of the transition function — they live alongside state mutations in the same `switch`, subject to the same compiler exhaustiveness checks.
 
 A task is automatically cancelled and replaced if `update` returns new work with the same identifier before the previous one finishes. This makes cancel-and-restart a one-liner with no explicit handle management:
 
@@ -127,11 +127,11 @@ A task is automatically cancelled and replaced if `update` returns new work with
 // update:
 case .queryChanged(let q):
     state.query = q
-    return .run(id: "search") { input, env in
+    return run(id: "search") { input, env in
         try? await Task.sleep(for: .milliseconds(300))
         guard !Task.isCancelled else { return }
         let results = await env.search(q)
-        try? input.post(.resultsLoaded(results))
+        try input.post(.resultsLoaded(results))
     }
 ```
 
@@ -151,11 +151,13 @@ case .queryChanged(let q):
     // spinner shown until the full load cycle completes
 }
 ```
+Note: in this case it is safe to write `try?` since we can ignore the error when attempting to dispatch an event when it happens within the `refresh` modifier. 
+
 
 And it provides natural backpressure in observation loops — the loop does not advance to wait for the next store change until the view has fully processed the current one:
 
 ```swift
-try? await input.request(.storeChanged(newCount: count))
+try await input.request(.storeChanged(newCount: count))
 // next observation cycle waits here
 ```
 

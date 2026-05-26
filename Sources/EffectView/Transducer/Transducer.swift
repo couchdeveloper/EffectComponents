@@ -111,9 +111,6 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     }
 
     
-    // TODO: document clearly when and why this function throws.
-    // Note: *ideally* it should not throw
-    
     /// Processes a regular event through `update` until the chain terminates.
     ///
     /// > Important: On normal return, `continuation` has been fully consumed: it was either
@@ -121,6 +118,8 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     /// later completion. If this function throws, it does not resume the
     /// continuation; the caller must handle the thrown error and decide how the
     /// waiting request should complete.
+    ///
+    /// - Throws: Throws when the task manager has been cancelled.
     static func compute<Input: TransducerInput<Event, Output>>(
         systemActor: isolated any Actor = #isolation,
         event: Event,
@@ -154,9 +153,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
         assert(cont == nil)
     }
 
-    // TODO: document clearly when and why this function throws.
-    // Note: *ideally* it should not throw.
-    // Note: it seems, the only case when it throws is a kind of precondition.
+    // Throws when the task manager is cancelled
     private static func executeEffect<Input: TransducerInput<Event, Output>>(
         systemActor: isolated any Actor = #isolation,
         _ effect: Effect,
@@ -165,12 +162,12 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
         input: Input?,
         env: Env
     ) async throws -> (Event?, Continuation<Output>?) where Output: Sendable, Env: Sendable, Input: Sendable {
-        switch effect {
+        switch effect.type {
         case ._task(id: let identifier, priority: let priority, let option, operation: let operation):
             guard let input else {
-                // TODO: Check if this should be better a precondition
-                throw RuntimeError.noInput
+                preconditionFailure("No Input value given when creating a task")
             }
+            try taskManager.checkCancellation()
             taskManager.addTask(
                 with: identifier,
                 option: option,
@@ -184,9 +181,9 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
 
         case ._taskIsolated(id: let identifier, priority: let priority, let option, isolatedOperation: let isolatedOperation):
             guard let input else {
-                // TODO: Check if this should be better a precondition
-                throw RuntimeError.noInput
+                preconditionFailure("No Input value given when creating a task")
             }
+            try taskManager.checkCancellation()
             taskManager.addTask(
                 with: identifier,
                 option: option,

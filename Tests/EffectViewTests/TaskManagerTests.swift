@@ -224,7 +224,7 @@ struct TaskManagerTests {
         do {
             try await harness.checkCancellation()
             Issue.record("Expected runtime unavailable cancellation")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .cancelled)
         } catch {
             Issue.record("Unexpected latched error: \(error)")
@@ -248,7 +248,7 @@ struct TaskManagerTests {
                 cancelled: nil
             )
             Issue.record("Expected future waiter to be rejected as runtime unavailable")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .cancelled)
         } catch {
             Issue.record("Unexpected rejected waiter error: \(error)")

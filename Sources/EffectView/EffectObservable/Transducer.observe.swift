@@ -26,7 +26,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     /// ```
     ///
     /// The named task (`"observe"` by default) is cancelled automatically when the view
-    /// disappears, or immediately when `update` returns `.cancel(name)`.
+    /// disappears, or immediately when `update` returns `cancel(name)`.
     ///
     /// - Parameters:
     ///   - envKeyPath: Key path from `Env` to the `@Observable` object. The object is held
@@ -37,7 +37,6 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     ///   - handler: Called with `input` and the current value on the initial read and on
     ///     every subsequent change. `async` — use `await input.request(…)` to wait for the
     ///     view to settle before the next observation cycle.
-    // TODO: possibly use a async *throwing* function for the operation and forward the error
     @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, visionOS 1.0, *)
     public static func observe<Object, Value>(
         _ envKeyPath: KeyPath<Env, Object>,
@@ -60,16 +59,14 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
                 }
             } catch is CancellationError {
                 // Transducer logic has cancelled. Do not rethrow.
-                // Expected termination path for explicit .cancel(name) or view teardown.
+                // Expected termination path for explicit cancel(name) or view teardown.
             } catch is ObservationTerminationError {
-                // TODO: consider rethrow
                 // IFF we would rethrow the error, the update function is responsible
                 // to catch and handle it, or otherwise it becomes a critical
                 // system error.
                 
                 // For now we end the observation quietly.
             } catch {
-                // TODO: consider rethrow
                 // IFF we would rethrow the error, the update function is responsible
                 // to catch and handle it, or otherwise it becomes a critical
                 // system error.
@@ -118,7 +115,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
                 }
             }
             catch is CancellationError {
-                // Expected termination path for explicit .cancel(name) or view teardown.
+                // Expected termination path for explicit cancel(name) or view teardown.
             } catch is ObservationTerminationError {
                 // Observed object deallocated; end the observation quietly.
             } catch {
@@ -149,7 +146,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     /// ```
     ///
     /// The named task (`"observe"` by default) is cancelled automatically when the view
-    /// disappears, or immediately when `update` returns `.cancel(name)`.
+    /// disappears, or immediately when `update` returns `cancel(name)`.
     ///
     /// - Parameters:
     ///   - object: The `@Observable` object to watch. Held weakly inside the task so the
@@ -181,7 +178,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
                     await operation(input, try observedValue(weakObject, keyPath: box))
                 }
             } catch is CancellationError {
-                // Expected termination path for explicit .cancel(name) or view teardown.
+                // Expected termination path for explicit cancel(name) or view teardown.
             } catch is ObservationTerminationError {
                 // Observed object deallocated; end the observation quietly.
             } catch {
@@ -228,7 +225,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
                     await isolatedOperation(input, try observedValue(weakObject, keyPath: box), isolation)
                 }
             } catch is CancellationError {
-                // Expected termination path for explicit .cancel(name) or view teardown.
+                // Expected termination path for explicit cancel(name) or view teardown.
             } catch is ObservationTerminationError {
                 // Observed object deallocated; end the observation quietly.
             } catch {

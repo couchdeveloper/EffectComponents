@@ -103,10 +103,10 @@ public struct EffectViewInput<Event, Output>: TransducerInput, Identifiable, Sen
     /// non-isolated callback without waiting for `update` to run.
     ///
     /// - Parameter event: The event to enqueue into the runtime.
-    /// - Throws: This implementation does not throw synchronously. Runtime failures
+    /// - Note: This implementation does not throw synchronously. Runtime failures
     ///   surface only inside the scheduled task that later processes the event.
     @inline(__always)
-    public func post(_ event: sending Event) throws {
+    public func post(_ event: sending Event) {
         Task { @MainActor in
             try await _send(event, self, nil)
         }
@@ -163,7 +163,7 @@ public struct EffectViewInput<Event, Output>: TransducerInput, Identifiable, Sen
     /// - Throws: Any error that ``post(_:)`` would throw for the same event.
     @inline(__always)
     public func callAsFunction(_ event: sending Event) throws {
-        try post(event)
+        post(event)
     }
 }
 

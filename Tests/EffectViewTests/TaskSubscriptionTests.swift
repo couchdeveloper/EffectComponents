@@ -351,7 +351,7 @@ extension TaskSubscriptionTests {
             releaseExpectation.fulfill()
 
             let secondOutput = try await secondWaiter.value
-            // TODO: Intermitently fails during test loop
+            // TODO: May intermittently fail when executed in a test loop
             #expect(secondOutput == "late-output")
             #expect(await counter.count == 1, "subscribe should attach to the cancelled tracked task instead of starting fresh work")
         }

@@ -69,7 +69,7 @@ final class TaskManager<Output: Sendable> {
             if let error {
                 throw error
             } else {
-                throw RuntimeUnavailable.cancelled
+                throw RuntimeError.cancelled
             }
         }
     }
@@ -101,9 +101,9 @@ final class TaskManager<Output: Sendable> {
     private var latchedShutdownError: any Swift.Error {
         switch state {
         case .active:
-            return RuntimeUnavailable.cancelled
+            return RuntimeError.cancelled
         case .cancelling(let error), .cancelled(let error):
-            return error ?? RuntimeUnavailable.cancelled
+            return error ?? RuntimeError.cancelled
         }
     }
 
@@ -257,7 +257,7 @@ final class TaskManager<Output: Sendable> {
         // `systemActor` establishes a reference cycle - until after the task
         // finishes. This is important to know when implementing an "FSM Effect
         // Actor" based on Swift Actors. That is, a proper implementation of an
-        // "FSM Effect Actor" should always have a `cancel()` method which cancells
+        // "FSM Effect Actor" should always have a `cancel()` method which cancels
         // all running tasks and additionally prevents enqueueing new ones.
         let task = Task(name: taskKey.string, priority: priority) { [weak self] in
             _ = systemActor
@@ -270,14 +270,6 @@ final class TaskManager<Output: Sendable> {
             }
             switch result {
             case .failure(let error):
-                // TODO: Triple check: Does a CancellationError not mean a "system error"??
-                // We only have a CancellationError that is not a "system error" when
-                // this task cancellation was explicitly caused by the transducer. That is:
-                // the managed task is itself cancelled, or in this context:
-                // if `error is CancellationError && Task.isCancelled` equals true.
-                // Thus, a "system error" can be a CancellationError as well.
-                // Now, the code is implemented (fixed) accordingly - but also:
-                // TODO: assert this in a dedicated unit test
                 if error is CancellationError && Task.isCancelled {
                     self?.finish(taskKey: taskKey, id: id, result: result)
                 } else {
@@ -320,9 +312,9 @@ final class TaskManager<Output: Sendable> {
             // Currently, with TaskKey being hashed on the identifier,
             // this can happen, when a subsequent task cancels the previous
             // one (aka `switchToLatest`), and the previous task has not
-            // been completed (and removed) *before* the new taks has been
-            // inserted into the ductionary with the *same* key. When previous
-            // taks eventually completes, it there's no entry with its `id`
+            // been completed (and removed) *before* the new task has been
+            // inserted into the dictionary with the *same* key. When the previous
+            // task eventually completes, there is no entry with its `id`
             // anymore.
             /* nothing */
         }

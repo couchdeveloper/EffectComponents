@@ -36,7 +36,7 @@ public final class EffectObservable<
     @ObservationIgnored
     private var runtimeSend: Send?
     @ObservationIgnored
-    nonisolated(unsafe) private var runtimeUnavailable: RuntimeUnavailable?
+    nonisolated(unsafe) private var runtimeUnavailable: RuntimeError?
     @ObservationIgnored
     private var initialEvent: Event?
     @ObservationIgnored
@@ -77,8 +77,7 @@ public final class EffectObservable<
                 do {
                     try await send(event, input: _input)
                 } catch {
-                    print("could not process initial event: \(error)")
-                    // TODO: consider sending a control event
+                    try? send.control(.systemError(error))
                 }
             }
         }
@@ -119,13 +118,13 @@ public final class EffectObservable<
     public func send(_ event: Event) async throws {
         try checkRuntimeAvailability()
         guard let send = runtimeSend else {
-            throw RuntimeUnavailable.actorCancelled
+            throw RuntimeError.actorCancelled
         }
         do {
             try await send(event, input: _input)
         } catch {
             let boundaryError = runtimeBoundaryError(for: error)
-            if let runtimeUnavailable = boundaryError as? RuntimeUnavailable {
+            if let runtimeUnavailable = boundaryError as? RuntimeError {
                 self.runtimeUnavailable = runtimeUnavailable
             }
             throw boundaryError
@@ -182,11 +181,9 @@ public final class EffectObservable<
     ///   `CancellationError` if accepted work is later cancelled.
     /// - Returns: the `Output?` value produced by the terminal `.task` closure.
     public func request(_ event: Event) async throws -> Output? {
-        // TODO: consider to to add a Task cancellation handler which sends a corresponding control event to the transducer.
-        // The transducer's action on this is currently "implementation defined". It *could* have no effect on the task operation, or it *could* cancel it.
         try checkRuntimeAvailability()
         guard let send = self.runtimeSend, let input = _input else {
-            throw RuntimeUnavailable.actorCancelled
+            throw RuntimeError.actorCancelled
         }
         return try await withCheckedThrowingContinuation { (continuation: Continuation<Output>) in
             Task {
@@ -194,7 +191,7 @@ public final class EffectObservable<
                     try await send.send(MainActor.shared, event, input, continuation)
                 } catch {
                     let boundaryError = runtimeBoundaryError(for: error)
-                    if let runtimeUnavailable = boundaryError as? RuntimeUnavailable {
+                    if let runtimeUnavailable = boundaryError as? RuntimeError {
                         self.runtimeUnavailable = runtimeUnavailable
                     }
                     continuation.resume(throwing: boundaryError)
@@ -218,7 +215,7 @@ public final class EffectObservable<
     /// gentle teardown as an event handled by the transducer itself, then call
     /// `cancel()` when the host is ready to discard the runtime.
     public func cancel() {
-        cancelRuntime(with: RuntimeUnavailable.actorCancelled)
+        cancelRuntime(with: RuntimeError.actorCancelled)
     }
     
     /// Cancels the observable runtime with a caller-provided system error.

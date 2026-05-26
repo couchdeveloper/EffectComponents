@@ -46,7 +46,7 @@ extension Counter.Transducer: EffectView::Transducer {
                         try await Task.sleep(nanoseconds: 1_000_000_000) // 1 sec
                         print("tick")
                         input(.tick)
-                    } catch {} // most likeley, the counter task has been cancelled; ignore it.
+                    } catch {} // most likely, the counter task has been cancelled; ignore it.
                 }
             }
         case .tick:

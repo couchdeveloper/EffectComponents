@@ -295,14 +295,14 @@ struct EffectViewTests {
                         // state. If it fails, send a corresponding failure event.
                         // Note: If we throw within an effect closure, we feed
                         // this error back into the system which is considered
-                        // a "system error". It preferred to handle the error or
+                        // a "system error". It is preferable to handle the error or
                         // to send a corresponding error event back.
                         do {
                             try await Task.sleep(for: .milliseconds(1)) // simulate remote work
                         } catch {
                             // not handled here in the test.
-                            // Production code should send a service error, for
-                            //  example: `let output try await input.request(Event.serviceFailed(error)) `
+                            // Production code should send a service error event,
+                            // for example: `let output = try await input.request(Event.serviceFailed(error))`
                             // then return `output`.
                         }
                         let result = "hello"
@@ -380,7 +380,7 @@ struct EffectViewTests {
                 do {
                     _ = try await input.request(.load)
                     Issue.record("Expected second request to throw RuntimeUnavailable.runtimeFailed")
-                } catch let error as RuntimeUnavailable {
+                } catch let error as RuntimeError {
                     #expect(error == .systemError)
                 } catch {
                     Issue.record("Unexpected second request error: \(error)")
@@ -439,7 +439,7 @@ struct EffectViewTests {
                     state.running = true
                     return task(id: "ticker") { input, _ in
                         do {
-                            // run infinitely - or until "ticker" tasks gets cancelled
+                            // run indefinitely, or until the "ticker" task gets cancelled
                             while true {
                                 try await Task.sleep(nanoseconds: 20_000_000) // 20 ms
                                 try input.post(Event.tick)
@@ -762,7 +762,7 @@ struct EffectViewTests {
     @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     @MainActor
     @Test func cancelObservationTaskStopsHandlerInvocations() async throws {
-        // Verify that .cancel("observe") prevents further handler calls.
+        // Verify that cancel("observe") prevents further handler calls.
         // After cancellation, mutating the observable must not deliver new values.
         struct ObsEnv: Sendable { let counter: ObservableCounter }
         class InvocationLog: @unchecked Sendable { var count = 0 }
@@ -812,8 +812,8 @@ struct EffectViewTests {
             guard let input = capturedInput else { Issue.record("Input not captured"); return }
             
             // Start observing; the initial value (0) is delivered via state.
-            // Caution: DO NOT use `request` for a observation task, because it won't finishe before it gets cancelled!
-            try input.post(.start)
+            // Caution: DO NOT use `request` for an observation task, because it will not finish before it gets cancelled.
+            input.post(.start)
             try await firstTickExpectation.await(nanoseconds: timeout)
             
             // Mutate the counter; the handler should fire once more.
@@ -907,12 +907,12 @@ private func counterUpdate(
         return nil
     case .start:
         state.running = true
-        return ._task(id: "ticker", priority: nil, option: .switchToLatest) { input, _ in
+        return .init(._task(id: "ticker", priority: nil, option: .switchToLatest) { input, _ in
             try input.post(.ticked)
-        }
+        })
     case .stop:
         state.running = false
-        return ._cancel("ticker")
+        return .init(._cancel("ticker"))
     case .ticked:
         state.count += 1
         return nil
@@ -948,14 +948,14 @@ private func loaderUpdate(
     case .load:
         state.isLoading = true
         state.error = nil
-        return ._task(id: "fetch", priority: nil, option: .switchToLatest) { input, env in
+        return .init(._task(id: "fetch", priority: nil, option: .switchToLatest) { input, env in
             do {
                 let items = try await env.fetch()
                 try input.post(.loaded(items))
             } catch {
                 try input.post(.failed(error.localizedDescription))
             }
-        }
+        })
     case .loaded(let items):
         state.isLoading = false
         state.items = items
@@ -1026,7 +1026,7 @@ struct EffectTypeTests {
         var state = CounterState()
         let effect = counterUpdate(state: &state, event: .start)
         #expect(state.running == true)
-        guard case ._task(id: let name, _, _, _) = effect, name == "ticker" else {
+        guard case ._task(id: let name, _, _, _) = effect?.type, name == "ticker" else {
             Issue.record(#"Expected .task(name: "ticker")"#)
             return
         }
@@ -1036,7 +1036,7 @@ struct EffectTypeTests {
         var state = CounterState(count: 0, running: true)
         let effect = counterUpdate(state: &state, event: .stop)
         #expect(state.running == false)
-        guard case ._cancel(let name) = effect else {
+        guard case ._cancel(let name) = effect?.type else {
             Issue.record("Expected .cancel")
             return
         }
@@ -1046,7 +1046,7 @@ struct EffectTypeTests {
     @Test func loadReturnsNamedFetchTask() {
         var state = LoaderState()
         let effect = loaderUpdate(state: &state, event: .load)
-        guard case ._task(id: let name, _, _, _) = effect, name == "fetch" else {
+        guard case ._task(id: let name, _, _, _) = effect?.type, name == "fetch" else {
             Issue.record(#"Expected .task(name: "fetch")"#)
             return
         }
@@ -1054,8 +1054,9 @@ struct EffectTypeTests {
 
     @Test func actionEffectInvokesClosureAndReturnsEvent() {
         enum Ev: Equatable, Sendable { case a, b }
-        let effect = TransducerEffect<Ev, Void, Void>._actionSync { _ in .b }
-        guard case ._actionSync(let run) = effect else {
+        let effect = TransducerEffect<Ev, Void, Void>.init(._actionSync { _ in .b } )
+
+        guard case ._actionSync(let run) = effect.type else {
             Issue.record("Expected .action")
             return
         }
@@ -1064,8 +1065,8 @@ struct EffectTypeTests {
 
     @Test func actionEffectCanReturnNil() {
         enum Ev: Equatable, Sendable { case a }
-        let effect = TransducerEffect<Ev, Void, Void>._actionSync { _ in nil }
-        guard case ._actionSync(let run) = effect else {
+        let effect = TransducerEffect<Ev, Void, Void>.init(._actionSync { _ in nil } )
+        guard case ._actionSync(let run) = effect.type else {
             Issue.record("Expected .action")
             return
         }
@@ -1074,19 +1075,19 @@ struct EffectTypeTests {
 
     @Test func sequenceContainsOrderedEffects() {
         enum Ev: Equatable, Sendable { case done }
-        let effect = TransducerEffect<Ev, Void, Void>._sequence([
-            ._cancel("old"),
-            ._task(id: "new", priority: nil, option: .switchToLatest) { _, _ in }
-        ])
-        guard case ._sequence(let effects) = effect, effects.count == 2 else {
+        let effect = TransducerEffect<Ev, Void, Void>.init(._sequence([
+            .init(._cancel("old")),
+            .init(._task(id: "new", priority: nil, option: .switchToLatest) { _, _ in })
+        ]))
+        guard case ._sequence(let effects) = effect.type, effects.count == 2 else {
             Issue.record("Expected .sequence with 2 effects")
             return
         }
-        guard case ._cancel("old") = effects[0] else {
+        guard case ._cancel("old") = effects[0].type else {
             Issue.record(#"Expected effects[0] to be .cancel("old")"#)
             return
         }
-        guard case ._task(id: let name, _, _, _) = effects[1], name == "new" else {
+        guard case ._task(id: let name, _, _, _) = effects[1].type, name == "new" else {
             Issue.record(#"Expected effects[1] to be .task(name: "new")"#)
             return
         }
@@ -1107,7 +1108,7 @@ struct TaskOperationTests {
     @Test func fetchSuccessSendsLoadedEvent() async {
         var state = LoaderState()
         let effect = loaderUpdate(state: &state, event: .load)
-        guard case ._task(_, _, _, let operation) = effect else {
+        guard case ._task(_, _, _, let operation) = effect?.type else {
             Issue.record("Expected .task"); return
         }
 
@@ -1122,7 +1123,7 @@ struct TaskOperationTests {
     @Test func fetchFailureSendsFailedEvent() async {
         var state = LoaderState()
         let effect = loaderUpdate(state: &state, event: .load)
-        guard case ._task(_, _, _, let operation) = effect else {
+        guard case ._task(_, _, _, let operation) = effect?.type else {
             Issue.record("Expected .task"); return
         }
 
@@ -1137,7 +1138,7 @@ struct TaskOperationTests {
     @Test func tickerTaskEnqueuesTickedEvent() async {
         var state = CounterState()
         let effect = counterUpdate(state: &state, event: .start)
-        guard case ._task(_, _, _, let operation) = effect else {
+        guard case ._task(_, _, _, let operation) = effect?.type else {
             Issue.record("Expected .task"); return
         }
 
@@ -1149,4 +1150,3 @@ struct TaskOperationTests {
         #expect(spy.received == [.ticked])
     }
 }
-

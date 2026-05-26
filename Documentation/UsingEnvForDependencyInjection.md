@@ -78,15 +78,15 @@ And inside a task, `env` is simply the injected value:
 ```swift
 case (_, .searchTapped(let query)):
     state = .loading(query: query)
-    return .sequence([
-        .cancel("search"),
-        .run(id: "search") { input, env in
+    return sequence([
+        cancel("search"),
+        run(id: "search") { input, env in
             env.trackQuery(query)
             do {
                 let movies = try await env.search(query)
-                try? input.post(.resultsReceived(movies))
+                try input.post(.resultsReceived(movies))
             } catch {
-                try? input.post(.requestFailed(error.localizedDescription))
+                try input.post(.requestFailed(error.localizedDescription))
             }
         }
     ])

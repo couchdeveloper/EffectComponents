@@ -66,7 +66,7 @@ extension EffectObservable {
         @MainActor
         public func send(_ event: sending Event) async throws {
             guard let actor else {
-                throw RuntimeUnavailable.actorDeallocated
+                throw RuntimeError.actorDeallocated
             }
             try await actor.send(event)
         }
@@ -84,7 +84,7 @@ extension EffectObservable {
         @inline(__always)
         public func post(_ event: sending Event) throws {
             guard let actor else {
-                throw RuntimeUnavailable.actorDeallocated
+                throw RuntimeError.actorDeallocated
             }
             try actor.checkRuntimeAvailability()
             Task { @MainActor in
@@ -129,7 +129,7 @@ extension EffectObservable {
             _ event: Event
         ) async throws -> Output? where Output: Sendable, Event: Sendable {
             guard let actor else {
-                throw RuntimeUnavailable.actorDeallocated
+                throw RuntimeError.actorDeallocated
             }
             return try await actor.request(event)
         }

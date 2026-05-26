@@ -32,12 +32,12 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     ///     forwarded to any caller suspended on ``Input/request(_:)``.
     ///
     /// - Returns: The effect.
-    // TODO: Need to exaplain clearly what it means, when an operation throws.
-    // Usually, operations shouls not fail, but in some cases, the operation may use
+    // TODO: Explain clearly what it means when an operation throws.
+    // Usually, operations should not fail, but in some cases, the operation may use
     // an input to send events back to the system and *this* input can fail due to a "system error". System
     // errors are critical errors - that is, it might mean, the actor is deallocated,
-    // or a potential event buffer did overflow or some other system error occured,
-    // That means, the transducer is not guaranteed to perform correctly anymoer. The
+    // or a potential event buffer overflowed, or some other system error occurred.
+    // That means the transducer is no longer guaranteed to perform correctly. The
     // best course of action is to tear down the transducer and actor, and forward
     // the error to event senders and waiters.
     @inline(__always)
@@ -47,7 +47,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
         option: TaskExecutionOption = .switchToLatest,
         operation: @escaping @Sendable @isolated(any) (any TransducerInput<Event, Output> & Sendable, Env) async throws -> Output?
     ) -> Effect {
-        ._task(id: id, priority: priority, option: option, operation: operation)
+        .init(._task(id: id, priority: priority, option: option, operation: operation))
     }
     
     /// Returns an effect which when invoked starts an async throwing operation isolated to the system actor
@@ -89,7 +89,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
         option: TaskExecutionOption = .switchToLatest,
         isolatedOperation: @escaping (any TransducerInput<Event, Output>, Env, isolated any Actor) async throws -> Output?
     ) -> Effect {
-        ._taskIsolated(id: id, priority: priority, option: option, isolatedOperation: isolatedOperation)
+        .init(._taskIsolated(id: id, priority: priority, option: option, isolatedOperation: isolatedOperation))
     }
     
     /// Return an effect which when invoked executes a synchronous step that may produce the next
@@ -116,7 +116,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     public static func action(
         _ action: @escaping (Env) -> Event?
     ) -> Effect {
-        ._actionSync(action)
+        .init(._actionSync(action))
     }
     
     /// Return an effect which when invoked executes an async step on a user specified global actor
@@ -142,7 +142,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     public static func action(
         _ action: @escaping @Sendable @isolated(any) (Env) async -> sending Event?
     ) -> Effect {
-        ._actionAsync(action)
+        .init(._actionAsync(action))
     }
     
     /// Return an effect which when invoked executes an async step on the system actor
@@ -168,7 +168,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     public static func action(
         _ action: @escaping (Env, isolated any Actor) async -> sending Event?
     ) -> Effect {
-        ._actionAsyncIsolated(action)
+        .init(._actionAsyncIsolated(action))
     }
     
     /// Returns an effect which when invoked feeds `event` back into `update` immediately, in
@@ -178,7 +178,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     /// - Returns: An effect.
     @inline(__always)
     public static func event(_ event: Event) -> Effect {
-        ._event(event)
+        .init(._event(event))
     }
     
     /// Returns an effect which cancels the running task with the given identifier, if any.
@@ -187,7 +187,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     /// - Returns: An effect.
     @inline(__always)
     public static func cancel(_ id: TaskIdentifier) -> Effect {
-        ._cancel(id)
+        .init(._cancel(id))
     }
     
     /// Returns an effect which contains a sequence of effects. The effects will be executed
@@ -195,11 +195,11 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     ///
     /// ```swift
     /// // Cancel a stale load before starting a refresh:
-    /// return .sequence([.cancel("load"), .refreshMovies()])
+    /// return sequence([cancel("load"), .refreshMovies()])
     /// ```
     ///
     /// - Important: Intermediate effects must be synchronous and terminal (`.cancel`
-    ///   or side-effect `.action` closures). An intermediate effect that returns an
+    ///   or side-effect `action` closures). An intermediate effect that returns an
     ///   event is not supported — the event is silently discarded. Use a dedicated
     ///   `update` step for event-producing chains instead.
     ///
@@ -207,7 +207,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     /// - Returns: An effect.
     @inline(__always)
     public static func sequence(_ effects: [Effect]) -> Effect {
-        ._sequence(effects)
+        .init(._sequence(effects))
     }
 }
 
@@ -226,7 +226,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     /// racing late failure from the operation.
     ///
     /// ```swift
-    /// return .run(id: "ticker") { input, env in
+    /// return run(id: "ticker") { input, env in
     ///     do {
     ///         while true {
     ///             try await env.clock.sleep(for: .seconds(1))
@@ -250,10 +250,10 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
         option: TaskExecutionOption = .switchToLatest,
         operation: @escaping @Sendable @isolated(any) (any TransducerInput<Event, Output> & Sendable, Env) async -> Void
     ) -> Effect where Env: Sendable {
-        ._task(id: id, priority: priority, option: option) { input, env in
+        .init(._task(id: id, priority: priority, option: option) { input, env in
             await operation(input, env)
             return nil
-        }
+        })
     }
     
     /// Returns an effect which, when invoked, starts a fire-and-forget async task that communicates
@@ -268,7 +268,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
     /// racing late failure from the operation.
     ///
     /// ```swift
-    /// return .run(id: "ticker") { input, env in
+    /// return run(id: "ticker") { input, env in
     ///     do {
     ///         while true {
     ///             try await env.clock.sleep(for: .seconds(1))
@@ -294,14 +294,14 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
         option: TaskExecutionOption = .switchToLatest,
         isolatedOperation: @escaping (any TransducerInput<Event, Output>, Env, isolated any Actor) async -> Void
     ) -> Effect where Env: Sendable {
-        ._taskIsolated(id: id, priority: priority, option: option) { input, env, isolation in
+        .init(._taskIsolated(id: id, priority: priority, option: option) { input, env, isolation in
             precondition(
                 systemActor != nil && systemActor === isolation,
                 "taskIsolated requires a non-nil matching system actor. Actor hosts must provide isolation. Expected \(String(describing: systemActor)), got \(isolation)."
             )
             await isolatedOperation(input, env, isolation)
             return nil
-        }
+        })
     }
 
 
@@ -337,7 +337,7 @@ extension Transducer where Effect == TransducerEffect<Event, Env, Output> {
         option: TaskExecutionOption = .switchToLatest,
         operation: @escaping @Sendable @isolated(any) (any TransducerInput<Event, Output> & Sendable, Env) async -> Output?
     ) -> Effect {
-        ._task(id: id, priority: priority, option: option, operation: operation)
+        .init(._task(id: id, priority: priority, option: option, operation: operation))
     }
     
 }

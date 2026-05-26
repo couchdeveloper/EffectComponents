@@ -96,14 +96,14 @@ static func update(
 
     case (_, .searchTapped(let query)):
         state = .loading(query: query)
-        return .sequence([
-            .cancel("search"),
-            .run(id: "search") { input, env in
+        return sequence([
+            cancel("search"),
+            run(id: "search") { input, env in
                 do {
                     let movies = try await env.search(query: query)
-                    try? input.post(.resultsReceived(movies))
+                    try input.post(.resultsReceived(movies))
                 } catch {
-                    try? input.post(.requestFailed(error.localizedDescription))
+                    try input.post(.requestFailed(error.localizedDescription))
                 }
             }
         ])
@@ -118,7 +118,7 @@ static func update(
 
     case (.loading, .cancelTapped):
         state = .idle
-        return .cancel("search")
+        return cancel("search")
 
     default:
         return nil  // event not valid in current state — ignore it
@@ -163,7 +163,7 @@ Feature: Movie search
 // Scenario: User starts a search
 case (_, .searchTapped(let query)):
     state = .loading(query: query)
-    return .run(id: "search") { ... }
+    return run(id: "search") { ... }
 
 // Scenario: Search returns results
 case (.loading(let query), .resultsReceived(let movies)):
@@ -173,7 +173,7 @@ case (.loading(let query), .resultsReceived(let movies)):
 // Scenario: User cancels while loading
 case (.loading, .cancelTapped):
     state = .idle
-    return .cancel("search")
+    return cancel("search")
 ```
 
 The scenarios *are* the implementation. The mapping is near 1:1.
@@ -211,7 +211,7 @@ struct SearchStateTests {
         let effect = update(state: &state, event: .cancelTapped)
 
         #expect(state == .idle)
-        // effect is .cancel("search")
+        // effect is cancel("search")
     }
 
     @Test func cancelInIdleStateIsIgnored() {
@@ -238,7 +238,7 @@ You can also derive a transition table from the test suite and verify it matches
 
 The enum state model eliminates category 1 entirely: the Swift type system won't let you represent `isLoading == true && errorMessage != nil` if your states are an enum.
 
-Category 2 is handled by the update function being processed serially on `@MainActor`. Two events never execute concurrently. State is never observed mid-mutation. The "what if the user taps twice?" scenario is just two calls to `update` in sequence: the second `searchTapped` hits the `.sequence([.cancel("search"), .run(id: "search") { ... }])` branch and replaces the in-flight task cleanly.
+Category 2 is handled by the update function being processed serially on `@MainActor`. Two events never execute concurrently. State is never observed mid-mutation. The "what if the user taps twice?" scenario is just two calls to `update` in sequence: the second `searchTapped` hits the `sequence([cancel("search"), run(id: "search") { ... }])` branch and replaces the in-flight task cleanly.
 
 Concurrency exists — tasks genuinely run in the background — but concurrency never *touches* state directly. It only delivers events. The update function remains a simple, synchronous function.
 

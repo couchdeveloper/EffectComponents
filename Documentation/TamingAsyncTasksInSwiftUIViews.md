@@ -64,7 +64,7 @@ This means a task can be cancelled because a parent view re-rendered and changed
 A common pattern for debounced search is:
 
 ```swift
-.task(id: query) {
+task(id: query) {
     try? await Task.sleep(for: .milliseconds(300))
     guard !Task.isCancelled else { return }
     results = await search(query)
@@ -81,7 +81,7 @@ The usual workaround is to reach for a ViewModel that holds an array of `Task` h
 
 ### Explicit cancellation on user intent is not straightforward
 
-If the user taps a Cancel button, you want to stop the running task immediately. With `.task`, there is no handle to call `.cancel()` on. The modifier owns the task and exposes no cancellation API. The workarounds involve either changing the `id:` value (which also restarts), or storing a `Task` handle externally — at which point you're managing task lifetime manually, outside of SwiftUI's model.
+If the user taps a Cancel button, you want to stop the running task immediately. With `.task`, there is no handle to call `cancel()` on. The modifier owns the task and exposes no cancellation API. The workarounds involve either changing the `id:` value (which also restarts), or storing a `Task` handle externally — at which point you're managing task lifetime manually, outside of SwiftUI's model.
 
 ### Coordination between tasks is manual
 
@@ -130,7 +130,7 @@ List(state.items, id: \.self) { Text($0) }
 
 ```swift
 case .refresh:
-    return .task(id: "refresh") { input, env in
+    return task(id: "refresh") { input, env in
         do {
             let items = try await env.fetch()
             return try await input.request(.loaded(items))
@@ -158,7 +158,7 @@ Cancellation is a first-class event returned from `update`:
 
 ```swift
 case .cancelTapped:
-    return .cancel("fetch")
+    return cancel("fetch")
 ```
 
 That's it. No stored `Task` handle, no flag, no `id:` dance.
@@ -169,19 +169,19 @@ Because task identifiers can be created at runtime, you can start as many tasks 
 
 ```swift
 case .startDownload(let id):
-    return .run(id: "download-\(id)") { input, env in
+    return run(id: "download-\(id)") { input, env in
         do {
             let data = try await env.download(id)
-            try? input.post(.downloaded(id, data))
+            try input.post(.downloaded(id, data))
         } catch {
-            try? input.post(
+            try input.post(
                 .downloadFailed(id, error.localizedDescription)
             )
         }
     }
 
 case .cancelDownload(let id):
-    return .cancel("download-\(id)")
+    return cancel("download-\(id)")
 ```
 
 No ViewModel, no array of handles, no manual lifecycle.
@@ -193,11 +193,11 @@ Starting a task whose identifier is already running cancels the previous run fir
 ```swift
 case .queryChanged(let q):
     state.query = q
-    return .run(id: "search") { input, env in
+    return run(id: "search") { input, env in
         try? await Task.sleep(for: .milliseconds(300))
         guard !Task.isCancelled else { return }
         let results = await env.search(q)
-        try? input.post(.resultsLoaded(results))
+        try input.post(.resultsLoaded(results))
     }
 ```
 

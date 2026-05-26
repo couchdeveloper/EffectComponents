@@ -8,7 +8,7 @@
 ///
 /// ```swift
 /// // Fire-and-forget task:
-/// return .run(id: "ticker") { input, env in
+/// return run(id: "ticker") { input, env in
 ///     while true {
 ///         try await env.clock.sleep(for: .seconds(1))
 ///         input(.tick)
@@ -16,13 +16,13 @@
 /// }
 ///
 /// // Perform-driven task (caller awaits result):
-/// return .request(id: "load") { input, env in
+/// return request(id: "load") { input, env in
 ///     let user = await env.api.fetchUser()
 ///     return await input.request(.loaded(user))
 /// }
 ///
 /// // Synchronous step — next event returned inline:
-/// return .action { env in
+/// return action { env in
 ///     env.analytics.track(.buttonTapped)
 ///     return .next
 /// }
@@ -43,15 +43,15 @@
 /// - `Env`: The dependency environment forwarded into every task and action closure.
 /// - `Output`: The value type returned to a caller suspended on ``Input/request(_:)``.
 ///   Use `Void` when no return value is needed.
-// TODO: Need to exaplain clearly what it means, when an operation throws.
-// Usually, operations shouls not fail, but in some cases, the operation may use
-// an input to send events back to the system and *this* input can fail due to a "system error". System
-// errors are critical errors - that is, it might mean, the actor is deallocated,
-// or a potential event buffer did overflow or some other system error occured,
-// That means, the transducer is not guaranteed to perform correctly anymoer. The
-// best course of action is to tear down the transducer and actor, and forward
-// the error to event senders and waiters.
-public enum TransducerEffect<Event, Env, Output> {
+public struct TransducerEffect<Event, Env, Output> {
+    let type: EffectType<Event, Env, Output>
+    
+    init(_ type: EffectType<Event, Env, Output>) {
+        self.type = type
+    }
+}
+
+enum EffectType<Event, Env, Output> {
     
     case none
     

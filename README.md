@@ -22,7 +22,7 @@ Most ViewModels start small and quickly turn into this:
 - two-way bindings further complicate the code and edge cases get missed
 - tests get harder to write, and mocks replace logic instead of verifying it
 
-The SwiftUI `task` modifer behavior is often surprising in practice. A timer started from a tab's root view is cancelled when the user switches tabs, then restarted when the view appears again. Work you expected to keep running gets torn down and started again just because the view went off-screen.
+The SwiftUI `task` modifier behavior is often surprising in practice. A timer started from a tab's root view is cancelled when the user switches tabs, then restarted when the view appears again. Work you expected to keep running gets torn down and started again just because the view went off-screen.
 
 ## The solution
 
@@ -31,6 +31,10 @@ With EffectView, you move a feature's logic into a small stand-alone enum that d
 `update` is a plain synchronous function: it receives the current state and an event, changes state, and decides what should happen next. It does not call services, start tasks, or cause side effects itself.
 
 If more work is needed, `update` returns an effect: just a function, possibly async, that the runtime executes one step later and where those side effects happen. That split keeps the logic easy to read and easy to test.
+
+If you know Redux or TCA, a `Transducer` plays a similar role to what those architectures often call a reducer. EffectView uses "transducer" because `update` does more than reduce state from an event: it also emits the next effect for the runtime to execute.
+
+The example below is a small debounced search feature. Read it as a transition table: query changes put the feature into a loading state and start a named search task; response events then settle the state back into either results or an error.
 
 ```swift
 import EffectView
@@ -61,15 +65,15 @@ enum SearchFeature: Transducer {
             state.isLoading = true
             state.errorMessage = nil
 
-            return .run(id: "search") { input, env in
+            return run(id: "search") { input, env in
                 try? await Task.sleep(for: .milliseconds(300))
                 guard !Task.isCancelled else { return }
 
                 do {
                     let results = try await env.search(query)
-                    try? input.post(.searchResponse(results))
+                    try input.post(.searchResponse(results))
                 } catch {
-                    try? input.post(.searchFailed(error.localizedDescription))
+                    try input.post(.searchFailed(error.localizedDescription))
                 }
             }
 

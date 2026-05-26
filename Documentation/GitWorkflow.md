@@ -113,6 +113,49 @@ Add SPI badges, fix docs URL, and harden test helper with timeout
   a configurable timeout; remove redundant readyExpectation pattern
 ```
 
+For example, if your branch contains a few rough commits:
+
+```
+pick ba56d23 WIP
+pick 8cc13c5 fix typos
+pick 8231aa0 Improve README.md
+```
+
+Run:
+
+```bash
+git fetch origin
+git rebase -i origin/main
+```
+
+Then edit the rebase todo so the first commit is kept and the rest are squashed into it:
+
+```
+pick ba56d23 WIP
+squash 8cc13c5 fix typos
+squash 8231aa0 Improve README.md
+```
+
+When Git opens the combined commit message, replace the rough messages with the PR title and body. For this branch, that could be:
+
+```
+Polish effect API surface and dispatch documentation
+
+Summary:
+- Hide effect implementation details behind TransducerEffect
+- Rename runtime boundary error type to RuntimeError
+- Comment out unfinished low-level Transducer.run API
+- Clarify post, send, and request dispatch semantics
+- Add README framing for Transducer as reducer-like but effect-emitting
+- Expand docs around dispatch failure and try? usage
+- Fix typos and stale terminology across docs, tests, and examples
+
+Testing:
+- swift test
+```
+
+After pushing the squashed branch, GitHub usually pre-fills the PR title and description from that single commit message.
+
 ---
 
 ## 6. Push the branch

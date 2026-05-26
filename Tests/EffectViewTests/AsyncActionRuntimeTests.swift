@@ -129,7 +129,7 @@ struct AsyncActionRuntimeTests {
         do {
             _ = try await waiter.value
             Issue.record("Expected accepted request to receive RuntimeUnavailable.actorCancelled")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .actorCancelled)
         } catch {
             Issue.record("Unexpected waiter error: \(error)")

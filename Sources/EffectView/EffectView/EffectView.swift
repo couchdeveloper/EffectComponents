@@ -23,6 +23,8 @@ import SwiftUI
 ///     }
 /// }
 /// ```
+/// > Note: In this case it is safe to write `try?` since we can ignore the error when
+///   attempting to dispatch an event when it happens within the Button action.
 ///
 /// ### Using `Env` for dependencies
 ///
@@ -145,8 +147,7 @@ public struct EffectView<
                 do {
                     try await Input(send!).send(event)
                 } catch {
-                    // TODO: improve handling this error
-                    print("initial event failed to be processed")
+                    try? self.send?.control(.systemError(error))
                 }
             }
         }

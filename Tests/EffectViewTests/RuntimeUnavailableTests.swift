@@ -83,7 +83,7 @@ struct RuntimeUnavailableTests {
         do {
             try await observable.send(.ping)
             Issue.record("Expected RuntimeUnavailable.actorCancelled")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .actorCancelled)
             #expect(error.errorDescription == "The runtime is unavailable because it has already been cancelled.")
         } catch {
@@ -102,7 +102,7 @@ struct RuntimeUnavailableTests {
         do {
             _ = try await observable.request(.ping)
             Issue.record("Expected RuntimeUnavailable.actorCancelled")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .actorCancelled)
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -121,7 +121,7 @@ struct RuntimeUnavailableTests {
         do {
             try await input.send(.ping)
             Issue.record("Expected RuntimeUnavailable.actorDeallocated")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .actorDeallocated)
             #expect(error.errorDescription == "The runtime is unavailable because it has already been deallocated.")
         } catch {
@@ -141,7 +141,7 @@ struct RuntimeUnavailableTests {
         do {
             _ = try await input.request(.ping)
             Issue.record("Expected RuntimeUnavailable.actorDeallocated")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .actorDeallocated)
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -160,7 +160,7 @@ struct RuntimeUnavailableTests {
         do {
             try input.post(.ping)
             Issue.record("Expected RuntimeUnavailable.actorDeallocated")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .actorDeallocated)
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -179,7 +179,7 @@ struct RuntimeUnavailableTests {
         do {
             try input.post(.ping)
             Issue.record("Expected RuntimeUnavailable.actorCancelled")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .actorCancelled)
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -210,7 +210,7 @@ struct RuntimeUnavailableTests {
         do {
             _ = try await waiter.value
             Issue.record("Expected accepted request to receive RuntimeUnavailable.actorCancelled")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .actorCancelled)
         } catch {
             Issue.record("Unexpected waiter error: \(error)")
@@ -238,7 +238,7 @@ struct RuntimeUnavailableTests {
         do {
             _ = try await observable.request(.start)
             Issue.record("Expected later request to throw the latched system error")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .systemError)
         } catch {
             Issue.record("Unexpected later request error: \(error)")
@@ -264,7 +264,7 @@ struct RuntimeUnavailableTests {
         do {
             try await observable.send(.start)
             Issue.record("Expected later send to throw RuntimeUnavailable.runtimeFailed")
-        } catch let error as RuntimeUnavailable {
+        } catch let error as RuntimeError {
             #expect(error == .systemError)
             #expect(error.errorDescription == "The runtime is unavailable because it has forcibly terminated because of a critical error.")
         } catch {

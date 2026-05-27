@@ -10,6 +10,14 @@ This document maps EffectComponents against the patterns iOS developers are most
 4. **Dispatch semantics** — what it means to "send" an event or action
 5. **Testability** — what you need to construct to exercise the logic
 
+## Motivation
+
+Many SwiftUI bugs are implicit state-machine bugs. Loading flags, two-way bindings, callbacks, publisher pipelines, and unstructured tasks spread a workflow across views and ViewModels until the actual transition graph exists only in the author's head.
+
+That can feel normal because the first implementation often works. A ViewModel with mutable properties, Combine handlers, and task-launching methods may appear shorter than an explicit transition function. But the missing code has not disappeared; it has moved into timing assumptions, property observer order, task interleavings, and QA-discovered edge cases.
+
+EffectComponents is a response to that accidental temporal complexity. It puts the workflow back into one transition function: events enter, state changes synchronously, effects are returned as values, and follow-up work re-enters as events. The result is not always fewer lines. The result is that the lines describe the machine the feature actually runs.
+
 ---
 
 ## The patterns
@@ -193,6 +201,22 @@ awaits Output?         │  Output                  │  intermediate types
 ```
 
 This is a stronger encapsulation boundary than TCA's store, which is deliberately transparent: any code holding a `Store` reference can observe the entire state tree. EffectView components behave more like actors — they receive messages, produce typed responses, and keep everything else behind a wall.
+
+**Code volume vs explicitness:** A real transition function can be longer than the equivalent naive ViewModel. A product list with initial loading, pull-to-refresh, infinite scrolling, search, filtering, empty content, stale content, cancellation, and error dismissal may have an `update` function around 150 lines. A ViewModel version of the same feature might look like 80 lines of imperative logic.
+
+That difference is not automatically boilerplate. In the transducer version, those lines name the workflow's invariants:
+
+- load-more is legal only when there is existing content and more data to fetch
+- pull-to-refresh keeps old content visible as stale content while the new request runs
+- duplicate loads with the same parameters are ignored
+- a new load supersedes an older load with different parameters
+- late async responses are accepted only if their request parameter still matches the current loading state
+- refresh can be awaited by SwiftUI's `.refreshable` until the whole load cycle settles
+- cancellation and error dismissal are explicit events
+
+The shorter ViewModel often looks simpler because some of these states are implicit in timing, mutable flags, task handles, or assumed call order. That code can work in demos while still hiding races, stale result bugs, missing empty-state handling, or incomplete refresh semantics. EffectComponents makes those cases visible in the transition table, where the compiler and tests can exercise them.
+
+Making the workflow explicit also reveals what is generic. In larger projects, paging, refresh, empty-state handling, stale-response rejection, and request-result shapes are often the same across many APIs. Once those rules are expressed as a transition function, they can be factored into reusable generic state and transducer templates parameterized by item type, query type, request parameter, response mapping, and fetch operation. ViewModels can theoretically be abstracted too, but when their logic is distributed across mutable properties, bindings, callbacks, and publisher chains, the reusable control logic is much harder to see.
 
 ---
 

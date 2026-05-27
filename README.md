@@ -141,7 +141,9 @@ struct SearchView: View {
 
 The view renders state and posts events. The feature logic stays in `update`.
 
-## Why this is useful
+When familiar with ViewModels, EffectView essentially implements the view model without requiring an Observable class instance. It also facilitates testing of the logic as the Transducer is a plain synchronous pure function. Furthermore, it enables the easy mocking of services because the infrastructure is already in place: effects receive a parameter `env` which is a struct or class containing dependencies provided from the SwiftUI environment.
+
+## Why is an EffectView useful
 
 - state changes stay local and explicit
 - async work is started from one place

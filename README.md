@@ -103,6 +103,9 @@ That means no `Task?` stored in a ViewModel, no ad-hoc mutation from random call
 
 ## Use it from SwiftUI
 
+Use the generic `EffectView`, which implements the "FSM Effect Actor". This is a standard SwiftUI view that retrieves its state from a parent view, in this case the `SearchView`. The `EffectView` contains a `Content` view defined as a `@ViewBuilder` closure with two parameters: the state and the input value. The state dictates what to render while the input allows you to send user intents (or `Events`) into the `EffectView` – or more precisely, into its underlying state machine – which is the `update` function.
+
+
 ```swift
 struct SearchView: View {
     @State private var state = SearchFeature.State()
